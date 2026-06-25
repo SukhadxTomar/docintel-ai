@@ -201,6 +201,7 @@ def _init_state() -> None:
         "pdf_names": [],
         "processing_done": False,
         "show_new_upload": False,
+        "sidebar_hidden": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -305,9 +306,14 @@ def _process_files(uploaded_files) -> None:
 
 # sidebar 
 
-with st.sidebar:
-    st.markdown("## 📄 PDF Chatbot")
-    st.markdown("---")
+if not st.session_state.sidebar_hidden:
+    with st.sidebar:
+        if st.button("◀ Close sidebar", key="btn_close_sidebar"):
+            st.session_state.sidebar_hidden = True
+            st.experimental_rerun()
+
+        st.markdown("## 📄 PDF Chatbot")
+        st.markdown("---")
 
     st.markdown("### Status")
     pdf_count = len(st.session_state.pdf_names)
@@ -419,6 +425,14 @@ with st.sidebar:
 
 
 # ---------- main chat area ----------
+
+toggle_label = "Open sidebar" if st.session_state.sidebar_hidden else "Close sidebar"
+if st.button(f"☰ {toggle_label}", key="btn_toggle_sidebar"):
+    st.session_state.sidebar_hidden = not st.session_state.sidebar_hidden
+    st.experimental_rerun()
+
+if st.session_state.sidebar_hidden:
+    st.info("Sidebar is hidden. Click the toggle button above to open it.")
 
 if not st.session_state.messages:
     if not st.session_state.processing_done:
