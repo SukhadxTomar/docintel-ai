@@ -1,40 +1,54 @@
-from models.llm_model import load_llm
-from prompts.chatbot_prompt import chat_prompt
+﻿from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterator
+
 from retrievers.retriever import create_retriever
-from langchain_core.output_parsers import StrOutputParser
+
+from .llm_chain import create_llm_chain, stream_llm_response
+from .rag_chain import create_rag_chain, stream_rag_response
+from .router import route_query
 
 
-def create_chat_chain(chunks):
+@dataclass
+class HybridChatChain:
+    """Routes each question to either general LLM chat or PDF RAG."""
 
-    retriever = create_retriever(chunks)
-    llm = load_llm()
-    parser = StrOutputParser()
+    retriever: Any | None = None
 
-    def format_docs(docs):
+    def __post_init__(self) -> None:
+        self.llm_chain = create_llm_chain()
+        self.rag_chain = create_rag_chain()
 
-        formatted_docs = []
+    def stream(self, inputs: dict[str, Any]) -> Iterator[str]:
+        question = inputs.get("question", "")
+        chat_history = inputs.get("chat_history", "")
 
-        for doc in docs:
-            source = doc.metadata.get("source", "Unknown")
-            page = doc.metadata.get("page", "Unknown")
+        # The router performs retrieval once and returns the chunks to reuse.
+        try:
+            decision = route_query(self.retriever, question)
+        except Exception:
+            decision = None
 
-            formatted_docs.append(
-                f"Source: {source}, Page: {page + 1}\n{doc.page_content}"
-            )
+        if decision is not None and decision.route == "rag":
+            try:
+                yield from stream_rag_response(
+                    self.rag_chain,
+                    decision.docs,
+                    question,
+                    chat_history,
+                )
+                return
+            except Exception:
+                pass
 
-        return "\n\n".join(formatted_docs)
+        yield from stream_llm_response(self.llm_chain, question, chat_history)
 
-    chain = (
-        {
-            "context": lambda x: format_docs(
-                retriever.invoke(x["question"])
-            ),
-            "question": lambda x: x["question"],
-            "chat_history": lambda x: x["chat_history"]
-        }
-        | chat_prompt
-        | llm
-        | parser
-    )
+    def invoke(self, inputs: dict[str, Any]) -> str:
+        return "".join(self.stream(inputs))
 
+
+def create_chat_chain(chunks: list[Any] | None = None):
+    retriever = create_retriever(chunks) if chunks else None
+    chain = HybridChatChain(retriever=retriever)
     return chain, retriever
