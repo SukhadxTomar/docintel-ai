@@ -7,27 +7,23 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Literal
 
+from utils.logger import log
+
 RouteName = Literal["llm", "rag"]
 
 DEFAULT_TOP_K = int(os.getenv("HYBRID_RAG_TOP_K", "4"))
 DEFAULT_SIMILARITY_THRESHOLD = float(
-    os.getenv("HYBRID_RAG_SIMILARITY_THRESHOLD", "0.65")
+    os.getenv("HYBRID_RAG_SIMILARITY_THRESHOLD", "0.55")
 )
 MIN_SCORELESS_CONFIDENCE = float(
     os.getenv("HYBRID_RAG_SCORELESS_CONFIDENCE", "0.28")
 )
-DEBUG_ROUTER = os.getenv("DEBUG_ROUTER", "False").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 
 _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how",
     "i", "in", "is", "it", "me", "my", "of", "on", "or", "that", "the",
     "this", "to", "was", "were", "what", "when", "where", "which", "who",
-    "why", "with", "you", "your",
+    "why", "with", "you", "your", "tell", "explain", "describe", "give",
 }
 
 
@@ -42,6 +38,9 @@ class RouteDecision:
     threshold: float | None = None
     retrieval_time_ms: float | None = None
     total_routing_time_ms: float | None = None
+    retrieved_docs: list[Any] = field(default_factory=list)
+    retrieved_scores: list[float | None] = field(default_factory=list)
+    context_length: int = 0
 
 
 def _top_k(retriever: Any) -> int:
@@ -61,70 +60,62 @@ def _has_meaningful_content(docs: list[Any]) -> bool:
     return any(len(getattr(doc, "page_content", "").strip()) >= 80 for doc in docs)
 
 
-def _scoreless_confidence(question: str, docs: list[Any]) -> float:
-    """Estimate relevance when the vector store cannot provide scores.
-
-    This is a conservative fallback only. Normal FAISS routing should use vector
-    similarity scores; this combines query/content overlap, chunk substance, and
-    source metadata to avoid treating arbitrary top-k retrieval as relevant.
-    """
+def _chunk_confidence(question: str, doc: Any) -> float:
     query_tokens = _tokens(question)
-    if not query_tokens or not docs:
+    if not query_tokens:
         return 0.0
 
-    best_confidence = 0.0
+    content = getattr(doc, "page_content", "") or ""
+    content_tokens = _tokens(content)
+    if not content_tokens:
+        return 0.0
 
-    for doc in docs:
-        content = getattr(doc, "page_content", "") or ""
-        content_tokens = _tokens(content)
-        if not content_tokens:
-            continue
+    overlap = len(query_tokens & content_tokens) / len(query_tokens)
+    density = len(query_tokens & content_tokens) / max(len(content_tokens), 1)
+    coverage = min(len(content.strip()) / 900, 1.0)
+    metadata = getattr(doc, "metadata", None) or {}
+    metadata_bonus = 0.06 if metadata.get("source") else 0.0
+    page_bonus = 0.03 if metadata.get("page") is not None else 0.0
 
-        overlap = len(query_tokens & content_tokens) / len(query_tokens)
-        coverage = min(len(content.strip()) / 700, 1.0)
-        metadata = getattr(doc, "metadata", None) or {}
-        metadata_bonus = 0.08 if metadata.get("source") else 0.0
-        page_bonus = 0.04 if metadata.get("page") is not None else 0.0
+    return min((overlap * 0.74) + (density * 0.10) + (coverage * 0.07) + metadata_bonus + page_bonus, 1.0)
 
-        confidence = min((overlap * 0.78) + (coverage * 0.10) + metadata_bonus + page_bonus, 1.0)
-        best_confidence = max(best_confidence, confidence)
 
-    return best_confidence
+def _scoreless_confidence(question: str, docs: list[Any]) -> float:
+    return max((_chunk_confidence(question, doc) for doc in docs), default=0.0)
 
 
 def _normalize_distance_score(score: float) -> float:
-    """Convert distance-style vector scores into a 0..1 relevance score."""
-    if math.isnan(score):
+    """Convert distance-style vector scores into a 0..1 confidence value."""
+    if math.isnan(score) or math.isinf(score):
         return 0.0
     return 1.0 / (1.0 + max(float(score), 0.0))
+
+
+def _coerce_relevance_score(score: float) -> float:
+    if math.isnan(score) or math.isinf(score):
+        return 0.0
+    return max(0.0, min(float(score), 1.0))
 
 
 def _vector_store(retriever: Any) -> Any | None:
     return getattr(retriever, "vectorstore", None) or getattr(retriever, "vector_store", None)
 
 
-def _retrieve_with_relevance_scores(
+def _retrieve_with_scores(
     vector_store: Any,
     question: str,
     k: int,
 ) -> list[tuple[Any, float]] | None:
-    if not hasattr(vector_store, "similarity_search_with_relevance_scores"):
-        return None
+    """Return docs with comparable 0..1 confidence scores when possible."""
+    if hasattr(vector_store, "similarity_search_with_score"):
+        results = vector_store.similarity_search_with_score(question, k=k)
+        return [(doc, _normalize_distance_score(float(score))) for doc, score in results]
 
-    results = vector_store.similarity_search_with_relevance_scores(question, k=k)
-    return [(doc, float(score)) for doc, score in results]
+    if hasattr(vector_store, "similarity_search_with_relevance_scores"):
+        results = vector_store.similarity_search_with_relevance_scores(question, k=k)
+        return [(doc, _coerce_relevance_score(float(score))) for doc, score in results]
 
-
-def _retrieve_with_raw_scores(
-    vector_store: Any,
-    question: str,
-    k: int,
-) -> list[tuple[Any, float]] | None:
-    if not hasattr(vector_store, "similarity_search_with_score"):
-        return None
-
-    results = vector_store.similarity_search_with_score(question, k=k)
-    return [(doc, _normalize_distance_score(float(score))) for doc, score in results]
+    return None
 
 
 def _retrieve_without_scores(retriever: Any, question: str) -> list[Any]:
@@ -153,6 +144,17 @@ def _source_name(doc: Any) -> str:
     return str(metadata.get("original_name") or os.path.basename(str(source)))
 
 
+def _source_names(docs: list[Any]) -> list[str]:
+    names = []
+    seen = set()
+    for doc in docs:
+        name = _source_name(doc)
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
 def _score_label(score: float | None) -> str:
     return "N/A" if score is None else f"{score:.4f}"
 
@@ -161,83 +163,60 @@ def _time_label(value: float | None) -> str:
     return "N/A" if value is None else f"{value:.2f} ms"
 
 
+def _context_length(docs: list[Any]) -> int:
+    return sum(len(getattr(doc, "page_content", "") or "") for doc in docs)
+
+
 def _log_router_decision(
     question: str,
     retriever_available: bool,
     decision: RouteDecision,
 ) -> None:
-    if not DEBUG_ROUTER:
+    log.section("NEW USER QUERY")
+    log.kv("Question", question)
+    log.kv("Retriever Exists", "Yes" if retriever_available else "No")
+    log.kv("Router Decision", "RAG" if decision.route == "rag" else "GENERAL LLM")
+    log.kv("Reason", decision.reason)
+
+    if not retriever_available:
+        log.kv("Source", "General AI Knowledge")
+        log.kv("Routing Time", _time_label(decision.total_routing_time_ms))
         return
 
-    separator = "=" * 60
-    lines = [
-        separator,
-        "ROUTER DECISION",
-        separator,
-        "Question:",
-        question,
-        "",
-        "Retriever Available:",
-        "Yes" if retriever_available else "No",
-    ]
+    log.divider()
+    log.info("Retriever")
+    log.kv("Chunks Retrieved", len(decision.retrieved_docs))
+    log.kv("Chunks Selected For RAG", len(decision.docs))
+    log.kv("Similarity Scores", "N/A" if not decision.used_scores else [_score_label(score) for score in decision.retrieved_scores])
+    log.kv("Threshold", "N/A" if decision.threshold is None else f"{decision.threshold:.4f}")
+    log.kv("Best Score", _score_label(decision.best_score))
+    log.kv("Retrieval Time", _time_label(decision.retrieval_time_ms))
 
-    if retriever_available:
-        lines.extend(["", f"Retrieved Chunks: {len(decision.docs)}"])
+    if decision.retrieved_docs:
+        log.info("Documents")
+        for index, doc in enumerate(decision.retrieved_docs, start=1):
+            metadata = getattr(doc, "metadata", None) or {}
+            page = _page_label(metadata.get("page"))
+            score = decision.retrieved_scores[index - 1] if index - 1 < len(decision.retrieved_scores) else None
+            preview = (getattr(doc, "page_content", "") or "").strip().replace("\n", " ")[:180]
+            log.list_item(f"{index}. {_source_name(doc)} | Page {page} | Score: {_score_label(score)}")
+            if preview:
+                log.list_item(f"   Preview: {preview}")
+    else:
+        log.info("Documents: None")
 
-        if decision.docs:
-            for index, doc in enumerate(decision.docs, start=1):
-                metadata = getattr(doc, "metadata", None) or {}
-                page = _page_label(metadata.get("page"))
-                score = decision.scores[index - 1] if index - 1 < len(decision.scores) else None
-                lines.append(
-                    f"{index}. {_source_name(doc)} | Page {page} | Score: {_score_label(score)}"
-                )
-        else:
-            lines.append("None")
+    if not decision.used_scores:
+        log.info("Similarity scores unavailable; scoreless routing used conservative text/metadata confidence.")
 
-        if not decision.used_scores:
-            lines.extend(
-                [
-                    "",
-                    "Similarity Scores:",
-                    "N/A",
-                    "",
-                    "Scoring:",
-                    "Similarity scores unavailable; routing used conservative scoreless confidence.",
-                ]
-            )
+    log.divider()
+    log.info("Prompt")
+    log.kv("Context Length", decision.context_length)
+    log.kv("Question Length", len(question))
 
-        lines.extend(
-            [
-                "",
-                "Threshold:",
-                "N/A" if decision.threshold is None else f"{decision.threshold:.4f}",
-                "",
-                "Best Score:",
-                _score_label(decision.best_score),
-                "",
-                "Retrieval Time:",
-                _time_label(decision.retrieval_time_ms),
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            "Total Routing Time:",
-            _time_label(decision.total_routing_time_ms),
-            "",
-            "Decision:",
-            decision.route.upper(),
-            "",
-            "Reason:",
-            decision.reason,
-            "",
-            separator,
-        ]
-    )
-
-    print("\n".join(lines), flush=True)
+    log.divider()
+    log.info("LLM Response")
+    log.kv("Source", ", ".join(_source_names(decision.docs)) if decision.route == "rag" else "General AI Knowledge")
+    log.kv("Routing Time", _time_label(decision.total_routing_time_ms))
 
 
 def _with_total_time(decision: RouteDecision, started_at: float) -> RouteDecision:
@@ -251,6 +230,9 @@ def _with_total_time(decision: RouteDecision, started_at: float) -> RouteDecisio
         threshold=decision.threshold,
         retrieval_time_ms=decision.retrieval_time_ms,
         total_routing_time_ms=(perf_counter() - started_at) * 1000,
+        retrieved_docs=decision.retrieved_docs,
+        retrieved_scores=decision.retrieved_scores,
+        context_length=decision.context_length,
     )
 
 
@@ -266,10 +248,19 @@ def _finish(
 
 
 def _qualified_scored_results(
+    question: str,
     scored_results: list[tuple[Any, float]],
     threshold: float,
 ) -> list[tuple[Any, float]]:
-    return [(doc, score) for doc, score in scored_results if score >= threshold]
+    qualified = []
+    for doc, score in scored_results:
+        lexical_confidence = _chunk_confidence(question, doc)
+        # Vector score is primary. Text/metadata confidence prevents weak top-k
+        # results from becoming RAG, while still allowing semantically strong hits.
+        routing_confidence = max(score, (score * 0.70) + (lexical_confidence * 0.30))
+        if routing_confidence >= threshold:
+            qualified.append((doc, routing_confidence))
+    return qualified
 
 
 def route_query(
@@ -277,11 +268,7 @@ def route_query(
     question: str,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> RouteDecision:
-    """Route by retrieval quality, not by user wording.
-
-    The router owns the single retrieval pass. Its returned docs are reused by
-    the RAG chain so logging never causes a second FAISS/vector-store search.
-    """
+    """Route by retrieval quality and reuse the same chunks for RAG."""
     started_at = perf_counter()
 
     if retriever is None:
@@ -303,48 +290,52 @@ def route_query(
         vector_store = _vector_store(retriever)
 
         if vector_store is not None:
-            scored_results = _retrieve_with_relevance_scores(vector_store, question, k)
-            if scored_results is None:
-                scored_results = _retrieve_with_raw_scores(vector_store, question, k)
+            scored_results = _retrieve_with_scores(vector_store, question, k)
 
             if scored_results is not None:
                 retrieval_time_ms = (perf_counter() - retrieval_started_at) * 1000
-                best_score = max((score for _, score in scored_results), default=None)
-                qualified_results = _qualified_scored_results(scored_results, similarity_threshold)
+                docs = [doc for doc, _ in scored_results]
+                scores = [score for _, score in scored_results]
+                best_score = max(scores, default=None)
+                qualified_results = _qualified_scored_results(question, scored_results, similarity_threshold)
 
                 if qualified_results:
-                    docs = [doc for doc, _ in qualified_results]
-                    scores = [score for _, score in qualified_results]
+                    rag_docs = [doc for doc, _ in qualified_results]
+                    rag_scores = [score for _, score in qualified_results]
                     return _finish(
                         question,
                         True,
                         RouteDecision(
                             "rag",
-                            "Relevant document chunks exceeded the routing threshold.",
-                            docs=docs,
-                            scores=scores,
-                            best_score=best_score,
+                            "Retrieved document chunks met the routing confidence threshold.",
+                            docs=rag_docs,
+                            scores=rag_scores,
+                            best_score=max(rag_scores, default=best_score),
                             used_scores=True,
                             threshold=similarity_threshold,
                             retrieval_time_ms=retrieval_time_ms,
+                            retrieved_docs=docs,
+                            retrieved_scores=scores,
+                            context_length=_context_length(rag_docs),
                         ),
                         started_at,
                     )
 
-                docs = [doc for doc, _ in scored_results]
-                scores = [score for _, score in scored_results]
                 return _finish(
                     question,
                     True,
                     RouteDecision(
                         "llm",
-                        "No sufficiently relevant chunks found.",
-                        docs=docs,
-                        scores=scores,
+                        "Retrieved chunks were below the routing confidence threshold.",
+                        docs=[],
+                        scores=[],
                         best_score=best_score,
                         used_scores=True,
                         threshold=similarity_threshold,
                         retrieval_time_ms=retrieval_time_ms,
+                        retrieved_docs=docs,
+                        retrieved_scores=scores,
+                        context_length=0,
                     ),
                     started_at,
                 )
@@ -367,6 +358,9 @@ def route_query(
                     used_scores=False,
                     threshold=MIN_SCORELESS_CONFIDENCE,
                     retrieval_time_ms=retrieval_time_ms,
+                    retrieved_docs=docs,
+                    retrieved_scores=[None] * len(docs),
+                    context_length=_context_length(docs),
                 ),
                 started_at,
             )
@@ -377,12 +371,15 @@ def route_query(
             RouteDecision(
                 "llm",
                 f"Similarity scores unavailable and scoreless retrieval confidence was weak ({confidence:.4f}).",
-                docs=docs,
-                scores=[None] * len(docs),
+                docs=[],
+                scores=[],
                 best_score=None,
                 used_scores=False,
                 threshold=MIN_SCORELESS_CONFIDENCE,
                 retrieval_time_ms=retrieval_time_ms,
+                retrieved_docs=docs,
+                retrieved_scores=[None] * len(docs),
+                context_length=0,
             ),
             started_at,
         )
@@ -399,6 +396,4 @@ def route_query(
             ),
             started_at,
         )
-
-
 

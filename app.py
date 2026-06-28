@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Iterable
@@ -9,6 +10,7 @@ import streamlit as st
 from chains.chat_chain import create_chat_chain
 from ingestion.pdf_loader import load_pdfs
 from ingestion.text_splitter import split_documents
+from utils.logger import log
 
 
 UPLOAD_DIR = Path("uploaded_pdfs")
@@ -32,6 +34,8 @@ def init_session_state() -> None:
         "processing_done": False,
         "uploaded_files": [],
         "pdf_names": [],
+        "last_source": None,
+        "last_source_docs": [],
     }
 
     for key, value in defaults.items():
@@ -46,6 +50,8 @@ def reset_session() -> None:
     st.session_state.processing_done = False
     st.session_state.uploaded_files = []
     st.session_state.pdf_names = []
+    st.session_state.last_source = None
+    st.session_state.last_source_docs = []
 
 
 def clear_chat() -> None:
@@ -132,6 +138,8 @@ def process_pdfs(uploaded_files: Iterable[Any]) -> bool:
     st.session_state.processing_done = True
     st.session_state.uploaded_files = saved_files
     st.session_state.pdf_names = [file["original_name"] for file in saved_files]
+    st.session_state.last_source = None
+    st.session_state.last_source_docs = []
 
     return True
 
@@ -156,6 +164,40 @@ def stream_response(question: str):
     }
 
     yield from chain.stream(payload)
+
+
+def _source_names_from_docs(docs: list[Any]) -> list[str]:
+    names = []
+    seen = set()
+
+    for doc in docs:
+        metadata = getattr(doc, "metadata", None) or {}
+        source = metadata.get("source", "Unknown")
+        name = metadata.get("original_name") or os.path.basename(str(source))
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+
+    return names
+
+
+def _source_info_from_decision(decision: Any | None) -> dict[str, Any]:
+    if decision is not None and getattr(decision, "route", None) == "rag" and getattr(decision, "docs", None):
+        names = _source_names_from_docs(decision.docs)
+        return {"type": "rag", "names": names}
+
+    return {"type": "llm", "names": ["General AI Knowledge"]}
+
+
+def render_source(source: dict[str, Any] | None) -> None:
+    if not source:
+        return
+
+    names = source.get("names") or ["General AI Knowledge"]
+    if source.get("type") == "rag":
+        st.success("Source: " + ", ".join(names))
+    else:
+        st.info("Source: General AI Knowledge")
 
 
 def render_sidebar() -> None:
@@ -221,6 +263,8 @@ def render_chat_history() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message["role"] == "assistant":
+                render_source(message.get("source"))
 
 
 def handle_chat_input() -> None:
@@ -240,20 +284,31 @@ def handle_chat_input() -> None:
     try:
         with st.chat_message("assistant"):
             response = st.write_stream(stream_response(prompt))
+            decision = getattr(st.session_state.chat_chain, "last_decision", None)
+            source = _source_info_from_decision(decision)
+            render_source(source)
 
     except Exception as exc:
         response = f"Sorry, I could not generate a response: {exc}"
+        source = {"type": "llm", "names": ["General AI Knowledge"]}
         st.error(response)
+
+    decision = getattr(st.session_state.chat_chain, "last_decision", None)
+    st.session_state.last_source = getattr(decision, "route", None) if decision is not None else None
+    st.session_state.last_source_docs = getattr(decision, "docs", []) if decision is not None else []
 
     st.session_state.messages.append(
         {
             "role": "assistant",
             "content": response if isinstance(response, str) else str(response),
+            "source": source,
         }
     )
 
 
 def main() -> None:
+    log.info("Application Started")
+    log.info("Loading Prompt Templates...")
     configure_page()
     init_session_state()
 
@@ -261,6 +316,7 @@ def main() -> None:
     render_header()
     render_chat_history()
     handle_chat_input()
+    log.success("Application Ready")
 
 
 if __name__ == "__main__":

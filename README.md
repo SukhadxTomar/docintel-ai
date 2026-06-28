@@ -1,4 +1,4 @@
-# DocIntel-AI
+﻿# DocIntel-AI
 
 A Streamlit-powered PDF chatbot application that converts uploaded PDF documents into an interactive retrieval-augmented generation (RAG) experience.
 
@@ -85,14 +85,14 @@ Then open the local URL shown in your terminal, upload one or more PDF files, an
 
 ## Project Structure
 
-- `app.py` — main Streamlit application and UI logic
-- `requirements.txt` — Python dependencies
-- `ingestion/` — PDF loading, document splitting, embeddings, and vector store creation
-- `chains/` — chat chain assembly and context formatting
-- `models/` — LLM loading and configuration
-- `prompts/` — system prompt template for the chatbot
-- `retrievers/` — retrieval wrapper around the vector store
-- `data/` — local storage for uploaded PDFs and vector DB files
+- `app.py` â€” main Streamlit application and UI logic
+- `requirements.txt` â€” Python dependencies
+- `ingestion/` â€” PDF loading, document splitting, embeddings, and vector store creation
+- `chains/` â€” chat chain assembly and context formatting
+- `models/` â€” LLM loading and configuration
+- `prompts/` â€” system prompt template for the chatbot
+- `retrievers/` â€” retrieval wrapper around the vector store
+- `data/` â€” local storage for uploaded PDFs and vector DB files
 
 ## Notes
 
@@ -109,3 +109,60 @@ Then open the local URL shown in your terminal, upload one or more PDF files, an
 ## License
 
 This project does not include a license file. Add one if you want to share or distribute the code.
+## Hybrid RAG Workflow and Observability
+
+The chatbot now runs as a hybrid assistant:
+
+1. `app.py` handles Streamlit UI, PDF upload, chat history, and per-response source display.
+2. Uploaded PDFs are loaded with `load_pdfs()`, split with `split_documents()`, embedded with HuggingFace embeddings, and indexed in FAISS.
+3. `create_chat_chain()` supports both no-PDF general chat and PDF-backed RAG chat.
+4. `router.py` performs one retrieval probe per question and decides whether to use RAG or the general LLM.
+5. If RAG is selected, the already-retrieved chunks are passed into `rag_chain.py`; no second FAISS search is performed.
+6. If retrieval confidence is below the threshold, retrieved chunks are ignored and the normal LLM chain answers from general knowledge.
+
+### Router Behavior
+
+Routing is based on retrieval quality, not keywords. If similarity scores are available, the router compares calibrated scores against `HYBRID_RAG_SIMILARITY_THRESHOLD`.
+
+Default threshold:
+
+```dotenv
+HYBRID_RAG_SIMILARITY_THRESHOLD=0.55
+```
+
+If similarity scores are unavailable, the router uses a conservative scoreless confidence heuristic based on query/content overlap, chunk substance, and metadata. Retrieved documents alone are not enough to force RAG.
+
+### Terminal Logs
+
+Each query logs:
+
+- user question
+- router decision and reason
+- retrieved chunk count
+- similarity scores or `N/A`
+- selected source PDFs
+- prompt context length
+- first 300 characters of the injected RAG context
+- whether the RAG or LLM chain streamed the response
+- response timing
+
+These logs are terminal-only and are not sent to the Streamlit UI.
+
+### Source Attribution
+
+Every assistant response displays its source in the Streamlit UI:
+
+- RAG responses show the actual PDF filename(s) from document metadata.
+- General LLM responses show `General AI Knowledge`.
+
+### Validation Notes
+
+A real uploaded resume PDF was processed through `load_pdfs()`, `split_documents()`, HuggingFace embeddings, FAISS, `create_retriever()`, and `create_chat_chain()`.
+
+Observed routing distribution:
+
+- PDF question: scores `0.5784`, `0.5719`, `0.5678`, `0.5385`; RAG selected with three chunks above `0.55`.
+- General question: scores `0.4823`, `0.4704`, `0.4642`, `0.4543`; LLM selected with zero RAG chunks.
+
+This supports `0.55` as the default threshold because it separates relevant document hits from unrelated top-k retrieval noise on the real FAISS pipeline.
+
