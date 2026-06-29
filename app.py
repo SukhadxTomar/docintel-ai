@@ -17,6 +17,29 @@ UPLOAD_DIR = Path("uploaded_pdfs")
 HISTORY_WINDOW_MESSAGES = 12
 
 
+def _vector_store_from_retriever(retriever: Any | None) -> Any | None:
+    if retriever is None:
+        return None
+
+    return getattr(retriever, "vectorstore", None) or getattr(retriever, "vector_store", None)
+
+
+def _indexed_chunks(retriever: Any | None) -> int | str:
+    vector_store = _vector_store_from_retriever(retriever)
+    if vector_store is None:
+        return 0
+
+    index = getattr(vector_store, "index", None)
+    if index is not None and hasattr(index, "ntotal"):
+        return int(index.ntotal)
+
+    ids = getattr(vector_store, "index_to_docstore_id", None)
+    if ids is not None:
+        return len(ids)
+
+    return "Unknown"
+
+
 def configure_page() -> None:
     st.set_page_config(
         page_title="PDF Chatbot",
@@ -60,6 +83,13 @@ def clear_chat() -> None:
 
 def ensure_chat_chain() -> bool:
     if st.session_state.chat_chain is not None:
+        chain_retriever = getattr(st.session_state.chat_chain, "retriever", None)
+        log.section("Ensure Chat Chain Debug")
+        log.kv("Existing Chat Chain", "YES")
+        log.kv("Session Retriever Exists", "YES" if st.session_state.retriever is not None else "NO")
+        log.kv("Chain Retriever Exists", "YES" if chain_retriever is not None else "NO")
+        log.kv("Same Retriever Object", chain_retriever is st.session_state.retriever)
+        log.kv("Indexed Chunks", _indexed_chunks(chain_retriever))
         return True
 
     try:
@@ -70,6 +100,10 @@ def ensure_chat_chain() -> bool:
 
     st.session_state.chat_chain = chat_chain
     st.session_state.retriever = retriever
+    log.section("Ensure Chat Chain Debug")
+    log.kv("Existing Chat Chain", "NO")
+    log.kv("Created General Chat Chain", "YES")
+    log.kv("Retriever Created", "YES" if retriever is not None else "NO")
     return True
 
 
@@ -141,6 +175,18 @@ def process_pdfs(uploaded_files: Iterable[Any]) -> bool:
     st.session_state.last_source = None
     st.session_state.last_source_docs = []
 
+    log.section("PDF Processing Debug")
+    log.kv("PDF Loaded", "YES" if documents else "NO")
+    log.kv("Document Count", len(documents))
+    log.kv("Chunk Count", len(chunks))
+    log.kv("Embedding Model", "BAAI/bge-small-en-v1.5")
+    log.kv("FAISS Index Size", _indexed_chunks(retriever))
+    log.kv("Vector Store Created", "YES" if _vector_store_from_retriever(retriever) is not None else "NO")
+    log.kv("Retriever Created", "YES" if retriever is not None else "NO")
+    log.kv("Retriever Type", type(retriever).__name__ if retriever is not None else "None")
+    log.kv("Chat Chain Retriever Exists", "YES" if getattr(chat_chain, "retriever", None) is not None else "NO")
+    log.kv("Session Retriever Matches Chain", st.session_state.retriever is getattr(chat_chain, "retriever", None))
+
     return True
 
 
@@ -157,6 +203,15 @@ def stream_response(question: str):
 
     if chain is None:
         raise RuntimeError("Chat chain is not ready.")
+
+    chain_retriever = getattr(chain, "retriever", None)
+    log.section("Before Router Debug")
+    log.kv("Question", question)
+    log.kv("Session Retriever is None", st.session_state.retriever is None)
+    log.kv("Chain Retriever is None", chain_retriever is None)
+    log.kv("Same Retriever Object", chain_retriever is st.session_state.retriever)
+    log.kv("Vector Store Exists", "YES" if _vector_store_from_retriever(chain_retriever) is not None else "NO")
+    log.kv("Indexed Chunks", _indexed_chunks(chain_retriever))
 
     payload = {
         "question": question,
