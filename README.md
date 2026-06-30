@@ -1,159 +1,80 @@
 ﻿# DocIntel-AI
 
-An AI-powered PDF chatbot built with **Streamlit**, **LangChain**, **Google Gemini**, and **FAISS**. Upload one or more PDF files and chat with them naturally using Retrieval-Augmented Generation (RAG).
+A PDF chatbot that actually knows when it's talking about your documents and when it's just talking. Upload a PDF, ask it questions, and it'll dig through the document for grounded answers — but if you ask it something unrelated ("what's the capital of France?"), it won't awkwardly force-fit your PDF into the answer. It just switches to general chat mode.
 
----
+That switching is the whole point of this project. Most RAG chatbots either always retrieve (even for small talk) or never know when retrieval would actually help. DocIntel-AI makes that decision per-question, automatically, using vector similarity scores.
 
-## Features
+## What it does
 
-* 📄 Chat with one or multiple PDF documents
-* 🤖 AI-powered responses using Google Gemini
-* 🔍 Semantic search with FAISS and Hugging Face embeddings
-* 🧠 Hybrid routing between PDF knowledge and general AI knowledge
-* 📚 Source attribution for every response
-* ⚡ Fast document retrieval and streaming responses
-* 📝 Detailed terminal logs for debugging and observability
+- **Upload one or more PDFs** and chat with them through a clean Streamlit interface
+- **Hybrid routing**: every question is scored against your documents before deciding whether to answer from the PDF or from general knowledge
+- **Token-by-token streaming** so responses appear live, the way ChatGPT-style interfaces do
+- **Source attribution**: every answer tells you whether it came from your documents or general AI knowledge, and which file/page it pulled from
+- **Structured logging** throughout the pipeline, so if something goes wrong (or you're just curious), you can see exactly what the router decided and why
 
----
+## How it works, in one paragraph
 
-## Tech Stack
+When you upload a PDF, it gets split into chunks, embedded, and stored in a FAISS vector index. When you ask a question, the router runs a similarity search against that index. If the best match clears a confidence threshold (0.50 by default), your question and the matching chunks get sent to the RAG chain, which answers using only that retrieved context. If nothing scores high enough — or you haven't uploaded a PDF at all — the question falls through to a general LLM chain that answers from the model's own knowledge. Either way, the answer streams back token by token.
 
-* Python
-* Streamlit
-* LangChain
-* Google Gemini
-* FAISS
-* Hugging Face Embeddings
-* PyPDF
-* python-dotenv
 
----
+## Tech stack
 
-## Installation
+| Layer | Tool |
+|---|---|
+| UI | Streamlit |
+| LLM | Google Gemini 2.5 Flash (via `langchain-google-genai`) |
+| Embeddings | HuggingFace `BAAI/bge-small-en-v1.5` |
+| Vector store | FAISS |
+| Orchestration | LangChain (LCEL) |
+| Retrieval strategy | MMR (Maximal Marginal Relevance) |
 
-Clone the repository:
+## Project structure
 
-```bash
-git clone <repository-url>
-cd docintel-ai
+```
+.
+├── app.py                      # Streamlit UI: upload, sidebar, chat loop
+├── chains/
+│   ├── chat_chain.py           # HybridChatChain — wires router + both chains together
+│   ├── rag_chain.py            # Answers grounded in retrieved PDF chunks
+│   └── llm_chain.py            # Answers from general knowledge
+├── routers/
+│   └── router.py                # Decides RAG vs LLM using similarity scores
+├── retrievers/
+│   └── retriever.py             # Builds the FAISS-backed MMR retriever
+├── models/
+│   └── llm_model.py             # Loads the Gemini chat model
+├── ingestion/
+│   ├── pdf_loader.py            # Loads raw PDFs (not shown above, but referenced)
+│   ├── text_splitter.py         # Chunks documents
+│   └── vector_store.py          # Builds the FAISS index
+└── utils/
+    └── logger.py                 # Structured ANSI logging used everywhere
 ```
 
-Create and activate a virtual environment:
+## Running it locally
 
-```bash
-python -m venv .venv
-```
+1. Clone the repo and install dependencies (`pip install -r requirements.txt` — add one if you haven't yet, based on the imports above: `streamlit`, `langchain`, `langchain-google-genai`, `langchain-huggingface`, `faiss-cpu`, `python-dotenv`).
+2. Create a `.env` file with your Gemini API key (`GOOGLE_API_KEY=...`).
+3. Run `streamlit run app.py`.
+4. Upload a PDF from the sidebar, hit "Process PDFs", and start chatting.
 
-Windows PowerShell:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Windows CMD:
-
-```cmd
-.\.venv\Scripts\activate.bat
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
----
+You can also chat without uploading anything — it just behaves as a general assistant until you give it documents to ground itself in.
 
 ## Configuration
 
-Create a `.env` file in the project root.
+A couple of environment variables let you tune the router without touching code:
 
-```env
-GOOGLE_API_KEY=your_google_api_key
-LANGCHAIN_API_KEY=your_langchain_api_key
+- `HYBRID_RAG_TOP_K` — how many chunks to retrieve per query (default 4)
+- `HYBRID_RAG_SIMILARITY_THRESHOLD` — the confidence cutoff for routing to RAG (default 0.35 in the router's own default, currently run at 0.50 in this build)
 
-HYBRID_RAG_SIMILARITY_THRESHOLD=0.35
-```
+## Why this design
 
----
+A lot of "production-grade" RAG demos skip the routing problem entirely — they assume every question is about the uploaded document. That breaks the moment a user asks something casual. DocIntel-AI treats routing as a first-class decision, logs the reasoning behind every choice (retrieved chunks, scores, threshold, which chain ran, how long it took), and falls back gracefully if retrieval fails or the vector store isn't ready yet. The goal was something that feels less like a toy demo and more like a system you could actually hand to someone.
 
-## Run the Application
+## Status
 
-```bash
-streamlit run app.py
-```
+Actively maintained as a portfolio project. Recent work has focused on observability (structured logging across the full pipeline), fixing a breaking change in `langchain-google-genai` 4.0.0 around streaming, and tightening the router's fallback behavior so a failed retrieval never crashes the chat.
 
-Open the local URL shown in the terminal, upload your PDFs, and start chatting.
+# Author
 
----
-
-## Project Structure
-
-```
-docintel-ai/
-│── app.py
-│── chains/
-│── ingestion/
-│── models/
-│── prompts/
-│── retrievers/
-│── router/
-│── data/
-│── requirements.txt
-```
-
----
-
-## How It Works
-
-1. Upload one or more PDF files.
-2. Documents are split into smaller chunks.
-3. Chunks are converted into embeddings and stored in a FAISS vector database.
-4. Every question first passes through a router.
-5. If the retrieved document similarity is **0.35 or higher**, the chatbot answers using the uploaded PDFs.
-6. Otherwise, it responds using the general Gemini model.
-
-This hybrid approach keeps document-related questions grounded while allowing the chatbot to answer general knowledge questions naturally.
-
----
-
-## Terminal Observability
-
-For every query, the application logs useful debugging information such as:
-
-* User question
-* Router decision
-* Similarity score
-* Threshold comparison
-* Retrieved document count
-* Source PDF names
-* Context size
-* Response time
-* Selected response chain (RAG or LLM)
-
-These logs are only visible in the terminal and are not shown in the Streamlit interface.
-
----
-
-## Source Attribution
-
-Each response includes its origin:
-
-* **Uploaded PDF(s)** for document-based answers
-* **General AI Knowledge** for non-document questions
-
----
-
-## Future Improvements
-
-* Conversation history export
-* Support for additional LLM providers
-* OCR support for scanned PDFs
-* Persistent vector database
-* Authentication and user sessions
-
----
-
-## License
-
-This project currently does not include a license. Add one if you plan to distribute or open-source the project.
+SUKHAD TOMAR
