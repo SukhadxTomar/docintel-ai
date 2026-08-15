@@ -2,18 +2,19 @@ from time import perf_counter
 
 from langchain_community.vectorstores import FAISS
 
-from ingestion.embeddings import embeddings
+from config import settings
+from ingestion.embeddings import get_embeddings
 from utils.logger import log
 
 
 def create_vector_store(chunks):
     started_at = perf_counter()
-    log.kv("Embedding Model", "BAAI/bge-small-en-v1.5")
+    log.kv("Embedding Model", settings.embedding_model)
     log.kv("Chunks To Embed", len(chunks))
     log.info("Embedding Started")
     vector_store = FAISS.from_documents(
         documents=chunks,  # putting chunks from textsplitter into documents parameter
-        embedding=embeddings  # putting embeddings from embeddings.py into embedding parameter
+        embedding=get_embeddings()  # shared HuggingFace embeddings, loaded lazily on first use
     )
     log.success("Embedding Finished")
     log.success("FAISS Created")

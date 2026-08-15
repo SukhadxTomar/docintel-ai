@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 import os
@@ -6,6 +6,13 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Literal
 
+from utils.doc_utils import (
+    context_length,
+    page_label,
+    source_name,
+    source_names,
+    vector_store_from_retriever,
+)
 from utils.logger import log
 
 RouteName = Literal["llm", "rag"]
@@ -50,10 +57,6 @@ def _coerce_relevance_score(score: float) -> float:
     return max(0.0, min(float(score), 1.0))
 
 
-def _vector_store(retriever: Any) -> Any | None:
-    return getattr(retriever, "vectorstore", None) or getattr(retriever, "vector_store", None)
-
-
 def _retrieve_with_scores(
     vector_store: Any,
     question: str,
@@ -81,33 +84,6 @@ def _retrieve_without_scores(retriever: Any, question: str) -> list[Any]:
     return []
 
 
-def _page_label(page: Any) -> str:
-    if page is None:
-        return "Unknown"
-
-    try:
-        return str(int(page) + 1)
-    except (TypeError, ValueError):
-        return str(page)
-
-
-def _source_name(doc: Any) -> str:
-    metadata = getattr(doc, "metadata", None) or {}
-    source = metadata.get("source", "Unknown")
-    return str(metadata.get("original_name") or os.path.basename(str(source)))
-
-
-def _source_names(docs: list[Any]) -> list[str]:
-    names = []
-    seen = set()
-    for doc in docs:
-        name = _source_name(doc)
-        if name not in seen:
-            seen.add(name)
-            names.append(name)
-    return names
-
-
 def _score_label(score: float | None) -> str:
     return "N/A" if score is None else f"{score:.4f}"
 
@@ -118,10 +94,6 @@ def _top_score_labels(scores: list[float | None], limit: int = 3) -> list[str]:
 
 def _time_label(value: float | None) -> str:
     return "N/A" if value is None else f"{value:.2f} ms"
-
-
-def _context_length(docs: list[Any]) -> int:
-    return sum(len(getattr(doc, "page_content", "") or "") for doc in docs)
 
 
 def _log_router_decision(
@@ -143,7 +115,7 @@ def _log_router_decision(
     log.divider()
     log.info("Retriever")
     log.kv("Retrieved Chunks", len(decision.retrieved_docs))
-    log.kv("Retrieved PDF Names", ", ".join(_source_names(decision.retrieved_docs)) or "None")
+    log.kv("Retrieved PDF Names", ", ".join(source_names(decision.retrieved_docs)) or "None")
     log.kv("Chunks Selected For RAG", len(decision.docs))
     log.kv("Similarity Scores", "N/A" if not decision.used_scores else [_score_label(score) for score in decision.retrieved_scores])
     log.kv("Top 3 Scores", "N/A" if not decision.used_scores else _top_score_labels(decision.retrieved_scores))
@@ -155,10 +127,10 @@ def _log_router_decision(
         log.info("Documents")
         for index, doc in enumerate(decision.retrieved_docs, start=1):
             metadata = getattr(doc, "metadata", None) or {}
-            page = _page_label(metadata.get("page"))
+            page = page_label(metadata.get("page"))
             score = decision.retrieved_scores[index - 1] if index - 1 < len(decision.retrieved_scores) else None
             preview = (getattr(doc, "page_content", "") or "").strip().replace("\n", " ")[:180]
-            log.list_item(f"{index}. {_source_name(doc)} | Page {page} | Score: {_score_label(score)}")
+            log.list_item(f"{index}. {source_name(doc)} | Page {page} | Score: {_score_label(score)}")
             if preview:
                 log.list_item(f"   Preview: {preview}")
     else:
@@ -174,9 +146,8 @@ def _log_router_decision(
 
     log.divider()
     log.info("LLM Response")
-    log.kv("Source", ", ".join(_source_names(decision.docs)) if decision.route == "rag" else "General AI Knowledge")
+    log.kv("Source", ", ".join(source_names(decision.docs)) if decision.route == "rag" else "General AI Knowledge")
     log.kv("Routing Time", _time_label(decision.total_routing_time_ms))
-    log.kv("Response Time", _time_label(decision.total_routing_time_ms))
 
 
 def _finish(
@@ -213,7 +184,6 @@ def route_query(
 
     if retriever is None:
         log.section("Router Retrieval Debug")
-        log.kv("Question", question)
         log.kv("Attempting Retrieval", "NO")
         log.kv("Retrieval Skipped Reason", "Retriever is None.")
         return _finish(
@@ -231,9 +201,8 @@ def route_query(
 
     try:
         k = _top_k(retriever)
-        vector_store = _vector_store(retriever)
+        vector_store = vector_store_from_retriever(retriever)
         log.section("Router Retrieval Debug")
-        log.kv("Question", question)
         log.kv("Attempting Retrieval", "YES")
         log.kv("Retriever Type", type(retriever).__name__)
         log.kv("Vector Store Exists", "YES" if vector_store is not None else "NO")
@@ -246,15 +215,8 @@ def route_query(
                 docs = [doc for doc, _ in scored_results]
                 scores = [score for _, score in scored_results]
                 best_score = max(scores, default=None)
-                log.kv("Retrieved Chunks", len(docs))
-                log.kv("Best Similarity Score", _score_label(best_score))
-                log.kv("Threshold", f"{similarity_threshold:.4f}")
-                log.kv("Top 3 Scores", _top_score_labels(scores))
-                log.kv("Source PDFs", ", ".join(_source_names(docs)) or "None")
 
                 if best_score is not None and best_score >= similarity_threshold:
-                    log.kv("Final Route", "RAG")
-                    log.kv("Reason", f"Best score {best_score:.4f} >= threshold {similarity_threshold:.4f}.")
                     return _finish(
                         question,
                         True,
@@ -269,18 +231,11 @@ def route_query(
                             retrieval_time_ms=retrieval_time_ms,
                             retrieved_docs=docs,
                             retrieved_scores=scores,
-                            context_length=_context_length(docs),
+                            context_length=context_length(docs),
                         ),
                         started_at,
                     )
 
-                log.kv("Final Route", "LLM")
-                log.kv(
-                    "Reason",
-                    "No retrieved chunk met the vector similarity threshold."
-                    if best_score is not None
-                    else "Retriever returned no scored chunks.",
-                )
                 return _finish(
                     question,
                     True,
@@ -311,13 +266,6 @@ def route_query(
 
         docs = _retrieve_without_scores(retriever, question)
         retrieval_time_ms = (perf_counter() - retrieval_started_at) * 1000
-        log.kv("Retrieved Chunks", len(docs))
-        log.kv("Best Similarity Score", "N/A")
-        log.kv("Threshold", f"{similarity_threshold:.4f}")
-        log.kv("Top 3 Scores", "N/A")
-        log.kv("Source PDFs", ", ".join(_source_names(docs)) or "None")
-        log.kv("Final Route", "LLM")
-        log.kv("Reason", "Similarity scores unavailable, so the vector-score threshold could not be evaluated.")
         return _finish(
             question,
             True,
@@ -339,13 +287,6 @@ def route_query(
 
     except Exception as exc:
         retrieval_time_ms = (perf_counter() - retrieval_started_at) * 1000
-        log.kv("Retrieved Chunks", 0)
-        log.kv("Best Similarity Score", "N/A")
-        log.kv("Threshold", f"{similarity_threshold:.4f}")
-        log.kv("Top 3 Scores", "N/A")
-        log.kv("Source PDFs", "None")
-        log.kv("Final Route", "LLM")
-        log.kv("Reason", f"Retrieval failed: {exc}")
         return _finish(
             question,
             True,

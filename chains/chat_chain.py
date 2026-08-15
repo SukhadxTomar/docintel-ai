@@ -1,9 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Iterator
 
+from utils.doc_utils import context_length, indexed_chunks, vector_store_from_retriever
 from utils.logger import log
 
 from .llm_chain import create_llm_chain, stream_llm_response
@@ -11,36 +12,9 @@ from .rag_chain import create_rag_chain, stream_rag_response
 from .router import RouteDecision, route_query
 
 
-def _vector_store_from_retriever(retriever: Any | None) -> Any | None:
-    if retriever is None:
-        return None
-
-    return getattr(retriever, "vectorstore", None) or getattr(retriever, "vector_store", None)
-
-
-def _indexed_chunks(retriever: Any | None) -> int | str:
-    vector_store = _vector_store_from_retriever(retriever)
-    if vector_store is None:
-        return 0
-
-    index = getattr(vector_store, "index", None)
-    if index is not None and hasattr(index, "ntotal"):
-        return int(index.ntotal)
-
-    ids = getattr(vector_store, "index_to_docstore_id", None)
-    if ids is not None:
-        return len(ids)
-
-    return "Unknown"
-
-
 def _context_preview(docs: list[Any]) -> str:
     context = "\n\n".join(getattr(doc, "page_content", "") or "" for doc in docs)
     return context.replace("\n", " ")[:300]
-
-
-def _context_length(docs: list[Any]) -> int:
-    return sum(len(getattr(doc, "page_content", "") or "") for doc in docs)
 
 
 @dataclass
@@ -57,6 +31,7 @@ class HybridChatChain:
     def stream(self, inputs: dict[str, Any]) -> Iterator[str]:
         question = inputs.get("question", "")
         chat_history = inputs.get("chat_history", "")
+        request_id = log.get_request_id() or log.new_request_id()
         started_at = perf_counter()
         response_chunks: list[str] = []
         actual_route = "llm"
@@ -64,8 +39,8 @@ class HybridChatChain:
         log.section("Before Router")
         log.kv("Question", question)
         log.kv("Retriever is None", self.retriever is None)
-        log.kv("Vector Store Exists", "YES" if _vector_store_from_retriever(self.retriever) is not None else "NO")
-        log.kv("Indexed Chunks", _indexed_chunks(self.retriever))
+        log.kv("Vector Store Exists", "YES" if vector_store_from_retriever(self.retriever) is not None else "NO")
+        log.kv("Indexed Chunks", indexed_chunks(self.retriever))
 
         try:
             decision = route_query(self.retriever, question)
@@ -82,7 +57,7 @@ class HybridChatChain:
                     log.section("Before RAG Chain")
                     log.kv("Route Selected", decision.route.upper())
                     log.kv("Documents Passed To RAG", len(decision.docs))
-                    log.kv("Context Length", _context_length(decision.docs))
+                    log.kv("Context Length", context_length(decision.docs))
                     log.kv("Context Preview", _context_preview(decision.docs))
                     for chunk in stream_rag_response(
                         self.rag_chain,
@@ -128,6 +103,7 @@ class HybridChatChain:
             elapsed_ms = (perf_counter() - started_at) * 1000
             response_text = "".join(response_chunks)
             log.section("Chat Chain")
+            log.kv("Request ID", request_id)
             log.kv("Question", question)
             log.kv("Route", actual_route.upper())
             log.kv("Documents Used", len(decision.docs) if decision is not None and actual_route == "rag" else 0)

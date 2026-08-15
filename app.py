@@ -1,6 +1,5 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-import os
 import uuid
 from pathlib import Path
 from typing import Any, Iterable
@@ -8,36 +7,15 @@ from typing import Any, Iterable
 import streamlit as st
 
 from chains.chat_chain import create_chat_chain
+from config import settings
 from ingestion.pdf_loader import load_pdfs
 from ingestion.text_splitter import split_documents
+from utils.doc_utils import indexed_chunks, page_label, source_name, vector_store_from_retriever
 from utils.logger import log
 
 
 UPLOAD_DIR = Path("uploaded_pdfs")
 HISTORY_WINDOW_MESSAGES = 12
-
-
-def _vector_store_from_retriever(retriever: Any | None) -> Any | None:
-    if retriever is None:
-        return None
-
-    return getattr(retriever, "vectorstore", None) or getattr(retriever, "vector_store", None)
-
-
-def _indexed_chunks(retriever: Any | None) -> int | str:
-    vector_store = _vector_store_from_retriever(retriever)
-    if vector_store is None:
-        return 0
-
-    index = getattr(vector_store, "index", None)
-    if index is not None and hasattr(index, "ntotal"):
-        return int(index.ntotal)
-
-    ids = getattr(vector_store, "index_to_docstore_id", None)
-    if ids is not None:
-        return len(ids)
-
-    return "Unknown"
 
 
 def configure_page() -> None:
@@ -89,7 +67,7 @@ def ensure_chat_chain() -> bool:
         log.kv("Session Retriever Exists", "YES" if st.session_state.retriever is not None else "NO")
         log.kv("Chain Retriever Exists", "YES" if chain_retriever is not None else "NO")
         log.kv("Same Retriever Object", chain_retriever is st.session_state.retriever)
-        log.kv("Indexed Chunks", _indexed_chunks(chain_retriever))
+        log.kv("Indexed Chunks", indexed_chunks(chain_retriever))
         return True
 
     try:
@@ -179,9 +157,9 @@ def process_pdfs(uploaded_files: Iterable[Any]) -> bool:
     log.kv("PDF Loaded", "YES" if documents else "NO")
     log.kv("Document Count", len(documents))
     log.kv("Chunk Count", len(chunks))
-    log.kv("Embedding Model", "BAAI/bge-small-en-v1.5")
-    log.kv("FAISS Index Size", _indexed_chunks(retriever))
-    log.kv("Vector Store Created", "YES" if _vector_store_from_retriever(retriever) is not None else "NO")
+    log.kv("Embedding Model", settings.embedding_model)
+    log.kv("FAISS Index Size", indexed_chunks(retriever))
+    log.kv("Vector Store Created", "YES" if vector_store_from_retriever(retriever) is not None else "NO")
     log.kv("Retriever Created", "YES" if retriever is not None else "NO")
     log.kv("Retriever Type", type(retriever).__name__ if retriever is not None else "None")
     log.kv("Chat Chain Retriever Exists", "YES" if getattr(chat_chain, "retriever", None) is not None else "NO")
@@ -210,8 +188,8 @@ def stream_response(question: str):
     log.kv("Session Retriever is None", st.session_state.retriever is None)
     log.kv("Chain Retriever is None", chain_retriever is None)
     log.kv("Same Retriever Object", chain_retriever is st.session_state.retriever)
-    log.kv("Vector Store Exists", "YES" if _vector_store_from_retriever(chain_retriever) is not None else "NO")
-    log.kv("Indexed Chunks", _indexed_chunks(chain_retriever))
+    log.kv("Vector Store Exists", "YES" if vector_store_from_retriever(chain_retriever) is not None else "NO")
+    log.kv("Indexed Chunks", indexed_chunks(chain_retriever))
 
     payload = {
         "question": question,
@@ -221,36 +199,54 @@ def stream_response(question: str):
     yield from chain.stream(payload)
 
 
-def _source_names_from_docs(docs: list[Any]) -> list[str]:
-    names = []
-    seen = set()
+def _citations_from_docs(docs: list[Any]) -> list[dict[str, str]]:
+    citations = []
 
     for doc in docs:
         metadata = getattr(doc, "metadata", None) or {}
-        source = metadata.get("source", "Unknown")
-        name = metadata.get("original_name") or os.path.basename(str(source))
-        if name not in seen:
-            seen.add(name)
-            names.append(name)
+        page = page_label(metadata.get("page"))
+        text = (getattr(doc, "page_content", "") or "").strip()
+        citations.append({"name": source_name(doc), "page": page, "text": text})
 
-    return names
+    return citations
 
 
 def _source_info_from_decision(decision: Any | None) -> dict[str, Any]:
     if decision is not None and getattr(decision, "route", None) == "rag" and getattr(decision, "docs", None):
-        names = _source_names_from_docs(decision.docs)
-        return {"type": "rag", "names": names}
+        return {"type": "rag", "citations": _citations_from_docs(decision.docs)}
 
     return {"type": "llm", "names": ["General AI Knowledge"]}
+
+
+def _citation_labels(citations: list[dict[str, str]]) -> list[str]:
+    """Distinct 'filename, Page: N' labels, order-preserving."""
+    labels = []
+    seen = set()
+
+    for citation in citations:
+        label = f"{citation['name']}, Page: {citation['page']}"
+        if label not in seen:
+            seen.add(label)
+            labels.append(label)
+
+    return labels
 
 
 def render_source(source: dict[str, Any] | None) -> None:
     if not source:
         return
 
-    names = source.get("names") or ["General AI Knowledge"]
     if source.get("type") == "rag":
-        st.success("Source: " + ", ".join(names))
+        citations = source.get("citations") or []
+        labels = _citation_labels(citations)
+        st.success("Source: " + (" | ".join(labels) if labels else "Uploaded documents"))
+
+        if citations:
+            with st.expander("Show retrieved passages"):
+                for citation in citations:
+                    st.markdown(f"**{citation['name']} — Page {citation['page']}**")
+                    if citation["text"]:
+                        st.write(citation["text"])
     else:
         st.info("Source: General AI Knowledge")
 
@@ -327,6 +323,8 @@ def handle_chat_input() -> None:
 
     if not prompt:
         return
+
+    log.new_request_id()  # fresh correlation ID scoping every log line for this chat turn
 
     if not ensure_chat_chain():
         return
