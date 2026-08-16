@@ -5,10 +5,10 @@ from typing import Any, Iterable, Iterator
 
 from langchain_core.output_parsers import StrOutputParser
 
-from models.llm_model import load_llm
-from prompts.chatbot_prompt import chat_prompt
-from utils.doc_utils import page_label, source_name
-from utils.logger import log
+from app.models.llm_model import load_llm
+from app.prompts.chatbot_prompt import chat_prompt
+from app.utils.doc_utils import page_label, source_name
+from app.utils.logger import log
 
 from .llm_chain import chunk_to_text
 

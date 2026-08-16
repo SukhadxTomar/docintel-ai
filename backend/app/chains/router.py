@@ -6,14 +6,14 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Literal
 
-from utils.doc_utils import (
+from app.utils.doc_utils import (
     context_length,
     page_label,
     source_name,
     source_names,
     vector_store_from_retriever,
 )
-from utils.logger import log
+from app.utils.logger import log
 
 RouteName = Literal["llm", "rag"]
 

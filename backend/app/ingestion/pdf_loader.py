@@ -3,7 +3,7 @@ from time import perf_counter
 
 from langchain_community.document_loaders import PyPDFLoader
 
-from utils.logger import log
+from app.utils.logger import log
 
 
 def load_pdfs(pdf_paths):

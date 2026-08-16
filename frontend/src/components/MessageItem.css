@@ -1,0 +1,250 @@
+.msg {
+  display: flex;
+  width: 100%;
+}
+
+/* -- User: a subtle right-aligned bubble ------------------------------- */
+.msg--user {
+  justify-content: flex-end;
+}
+
+.msg__bubble {
+  max-width: 100%;
+  padding: var(--space-10) var(--space-14);
+  background: var(--color-hover-veil);
+  border: 1px solid var(--color-edge-gray);
+  border-radius: var(--radius-nav);
+  color: var(--color-graphite-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* -- Assistant: full-width markdown ------------------------------------ */
+.msg--assistant {
+  justify-content: flex-start;
+}
+
+.msg__body {
+  width: 100%;
+  color: var(--color-graphite-ink);
+}
+
+/* -- Streaming affordances --------------------------------------------- */
+.msg__caret {
+  display: inline-block;
+  width: 8px;
+  height: 1.05em;
+  vertical-align: text-bottom;
+  background: var(--color-graphite-ink);
+  border-radius: 1px;
+  animation: msg-caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes msg-caret-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.msg__typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--space-6) 0;
+}
+
+.msg__typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-hollow);
+  animation: msg-typing 1.2s ease-in-out infinite;
+}
+
+.msg__typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.msg__typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes msg-typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 0.9;
+    transform: translateY(-3px);
+  }
+}
+
+/* -- Achromatic error note (no red) ------------------------------------ */
+.msg__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nav);
+  background: var(--color-sidebar-mist);
+  color: var(--color-mid-ash);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.msg__error-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--color-hollow);
+}
+
+/* -- Markdown ---------------------------------------------------------- */
+.markdown {
+  overflow-wrap: anywhere;
+}
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 0 0 var(--space-12);
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  line-height: var(--leading-heading);
+  font-weight: var(--weight-semibold);
+  margin: var(--space-20) 0 var(--space-10);
+}
+
+.markdown h1 {
+  font-size: var(--text-heading);
+}
+
+.markdown h2 {
+  font-size: 20px;
+}
+
+.markdown h3 {
+  font-size: 17px;
+}
+
+.markdown h4 {
+  font-size: var(--text-body);
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 var(--space-12);
+  padding-left: 1.4em;
+}
+
+.markdown li {
+  margin: var(--space-6) 0;
+}
+
+.markdown li > ul,
+.markdown li > ol {
+  margin: var(--space-6) 0 0;
+}
+
+.markdown a {
+  color: var(--color-graphite-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--color-hollow);
+}
+
+.markdown a:hover {
+  text-decoration-color: var(--color-graphite-ink);
+}
+
+.markdown strong {
+  font-weight: var(--weight-semibold);
+}
+
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--color-hairline);
+  margin: var(--space-20) 0;
+}
+
+.markdown blockquote {
+  margin: 0 0 var(--space-12);
+  padding: var(--space-6) var(--space-14);
+  border-left: 2px solid var(--color-edge-gray);
+  color: var(--color-mid-ash);
+}
+
+.markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-card);
+}
+
+/* Inline code */
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-hover-veil);
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+}
+
+/* Code block */
+.markdown pre {
+  margin: 0 0 var(--space-12);
+  padding: var(--space-14);
+  background: var(--color-sidebar-mist);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-card);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: var(--text-caption);
+  line-height: 1.6;
+}
+
+/* Tables: hairline-bordered */
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 var(--space-12);
+  font-size: var(--text-caption);
+  display: block;
+  overflow-x: auto;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--color-hairline);
+  padding: var(--space-8) var(--space-10);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  font-weight: var(--weight-semibold);
+  background: var(--color-hover-veil);
+}

@@ -1,0 +1,61 @@
+.source-badge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-14);
+}
+
+.source-badge__label {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-hollow);
+  font-weight: var(--weight-medium);
+}
+
+.source-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: 3px var(--space-10);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-link);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-mid-ash);
+  background: var(--color-pure-white);
+  max-width: 100%;
+}
+
+.source-chip__icon {
+  flex: none;
+  color: var(--color-hollow);
+}
+
+.source-chip__name {
+  font-weight: var(--weight-medium);
+  color: var(--color-graphite-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22ch;
+}
+
+.source-chip__page {
+  color: var(--color-hollow);
+  flex: none;
+}
+
+.source-chip--general {
+  color: var(--color-mid-ash);
+  background: var(--color-sidebar-mist);
+}

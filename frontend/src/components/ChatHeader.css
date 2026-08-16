@@ -1,0 +1,25 @@
+.chat-header {
+  flex: none;
+  border-bottom: 1px solid var(--color-hairline);
+  background: var(--color-pure-white);
+}
+
+.chat-header__inner {
+  max-width: var(--conversation-max);
+  margin: 0 auto;
+  padding: var(--space-14) var(--space-20);
+}
+
+.chat-header__title {
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-semibold);
+  color: var(--color-graphite-ink);
+}
+
+.chat-header__caption {
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-hollow);
+}

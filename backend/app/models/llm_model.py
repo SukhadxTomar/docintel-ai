@@ -1,7 +1,7 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 
-from config import settings
+from app.core.config import settings
 
 load_dotenv()
 

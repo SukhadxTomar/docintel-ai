@@ -1,0 +1,67 @@
+.app {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.conversation {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-pure-white);
+}
+
+/* -- Blocking bootstrap error (backend unreachable at load) ------------ */
+.conversation__blocker {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-20);
+}
+
+.conversation__note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  max-width: 420px;
+  padding: var(--space-16);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-card);
+  background: var(--color-sidebar-mist);
+  color: var(--color-mid-ash);
+}
+
+.conversation__note-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--color-hollow);
+}
+
+.conversation__note-body p {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.conversation__retry {
+  margin-top: var(--space-10);
+  padding: var(--space-8) var(--space-14);
+  border-radius: var(--radius-button);
+  background: var(--color-graphite-ink);
+  color: var(--color-on-ink);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  transition: background var(--transition-fast);
+}
+
+.conversation__retry:hover {
+  background: #000;
+}
+
+@media (max-width: 640px) {
+  .sidebar {
+    width: 240px;
+  }
+}

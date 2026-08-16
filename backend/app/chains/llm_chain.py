@@ -6,8 +6,8 @@ from typing import Any, Iterator
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from models.llm_model import load_llm
-from utils.logger import log
+from app.models.llm_model import load_llm
+from app.utils.logger import log
 
 
 GENERAL_PROMPT = ChatPromptTemplate.from_messages(

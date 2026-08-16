@@ -4,8 +4,14 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Iterator
 
-from utils.doc_utils import context_length, indexed_chunks, vector_store_from_retriever
-from utils.logger import log
+from app.utils.doc_utils import (
+    context_length,
+    indexed_chunks,
+    page_label,
+    source_name,
+    vector_store_from_retriever,
+)
+from app.utils.logger import log
 
 from .llm_chain import create_llm_chain, stream_llm_response
 from .rag_chain import create_rag_chain, stream_rag_response
@@ -15,6 +21,22 @@ from .router import RouteDecision, route_query
 def _context_preview(docs: list[Any]) -> str:
     context = "\n\n".join(getattr(doc, "page_content", "") or "" for doc in docs)
     return context.replace("\n", " ")[:300]
+
+
+def _sources_from_decision(decision: RouteDecision | None) -> list[dict[str, str]]:
+    """Distinct ``{name, page}`` sources for the RAG documents that answered the query."""
+    if decision is None or not getattr(decision, "docs", None):
+        return []
+
+    seen: set[tuple[str, str]] = set()
+    sources: list[dict[str, str]] = []
+    for doc in decision.docs:
+        metadata = getattr(doc, "metadata", None) or {}
+        entry = (source_name(doc), page_label(metadata.get("page")))
+        if entry not in seen:
+            seen.add(entry)
+            sources.append({"name": entry[0], "page": entry[1]})
+    return sources
 
 
 @dataclass
@@ -28,7 +50,19 @@ class HybridChatChain:
         self.llm_chain = create_llm_chain()
         self.rag_chain = create_rag_chain()
 
-    def stream(self, inputs: dict[str, Any]) -> Iterator[str]:
+    def stream(self, inputs: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Yield streaming events for one question.
+
+        Each yielded value is a dict:
+          - ``{"type": "token", "text": <str>}``  one per generated text delta
+          - ``{"type": "final", "mode": "rag"|"llm", "sources": [{"name","page"}...]}``
+            emitted exactly once, after the answer finishes.
+
+        The routing decision travels *in* the stream (the ``final`` event) rather
+        than via shared instance state, so a single chain instance can be streamed
+        concurrently without callers racing on ``last_decision``. The attribute is
+        still set for logging continuity but must not be read across requests.
+        """
         question = inputs.get("question", "")
         chat_history = inputs.get("chat_history", "")
         request_id = log.get_request_id() or log.new_request_id()
@@ -66,7 +100,8 @@ class HybridChatChain:
                         chat_history,
                     ):
                         response_chunks.append(chunk)
-                        yield chunk
+                        yield {"type": "token", "text": chunk}
+                    yield {"type": "final", "mode": "rag", "sources": _sources_from_decision(decision)}
                     return
                 except Exception as exc:
                     actual_route = "llm"
@@ -97,7 +132,8 @@ class HybridChatChain:
                 log.kv("Threshold", decision.threshold if decision.threshold is not None else "N/A")
             for chunk in stream_llm_response(self.llm_chain, question, chat_history):
                 response_chunks.append(chunk)
-                yield chunk
+                yield {"type": "token", "text": chunk}
+            yield {"type": "final", "mode": "llm", "sources": []}
 
         finally:
             elapsed_ms = (perf_counter() - started_at) * 1000
@@ -111,12 +147,16 @@ class HybridChatChain:
             log.kv("Response Time", f"{elapsed_ms:.2f} ms")
 
     def invoke(self, inputs: dict[str, Any]) -> str:
-        return "".join(self.stream(inputs))
+        return "".join(
+            event["text"]
+            for event in self.stream(inputs)
+            if event.get("type") == "token"
+        )
 
 
 def create_chat_chain(chunks: list[Any] | None = None):
     if chunks:
-        from retrievers.retriever import create_retriever
+        from app.retrievers.retriever import create_retriever
 
         retriever = create_retriever(chunks)
     else:

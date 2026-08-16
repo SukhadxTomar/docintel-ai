@@ -1,0 +1,170 @@
+.sidebar {
+  flex: none;
+  width: var(--sidebar-width);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-sidebar-mist);
+  border-right: 1px solid var(--color-hairline);
+}
+
+/* -- Brand ------------------------------------------------------------- */
+.sidebar__brand {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-16) var(--space-16) var(--space-12);
+}
+
+.sidebar__brand-mark {
+  color: var(--color-graphite-ink);
+}
+
+.sidebar__brand-name {
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+/* -- New chat ---------------------------------------------------------- */
+.sidebar__new {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin: 0 var(--space-12);
+  padding: var(--space-10) var(--space-12);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nav);
+  background: var(--color-pure-white);
+  color: var(--color-graphite-ink);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.sidebar__new:hover:not(:disabled) {
+  background: var(--color-hover-veil);
+  border-color: var(--color-edge-gray);
+}
+
+.sidebar__new:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* -- Scrollable middle ------------------------------------------------- */
+.sidebar__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-16) var(--space-12);
+}
+
+.sidebar__hint {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-hollow);
+}
+
+/* -- Uploaded PDFs ----------------------------------------------------- */
+.sidebar__pdfs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.sidebar__section-title {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--color-hollow);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sidebar__pdf-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sidebar__pdf {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-8);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nav);
+  background: var(--color-pure-white);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.sidebar__pdf-icon {
+  flex: none;
+  color: var(--color-hollow);
+}
+
+.sidebar__pdf-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-graphite-ink);
+}
+
+.sidebar__pdf-meta {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-hollow);
+}
+
+/* -- Footer ------------------------------------------------------------ */
+.sidebar__footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-12);
+  border-top: 1px solid var(--color-hairline);
+}
+
+.sidebar__clear {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-nav);
+  color: var(--color-mid-ash);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sidebar__clear:hover:not(:disabled) {
+  background: var(--color-hover-veil);
+  color: var(--color-graphite-ink);
+}
+
+.sidebar__clear:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sidebar__foot-note {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-hollow);
+  padding-left: var(--space-6);
+}

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from langchain_huggingface import HuggingFaceEmbeddings
 
-from config import settings
-from utils.logger import log
+from app.core.config import settings
+from app.utils.logger import log
 
 _embeddings: HuggingFaceEmbeddings | None = None
 

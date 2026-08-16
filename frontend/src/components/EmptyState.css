@@ -1,0 +1,108 @@
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-20);
+  min-height: 100%;
+  max-width: var(--conversation-max);
+  margin: 0 auto;
+  padding: var(--space-20) 0;
+  text-align: center;
+}
+
+.empty__intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  max-width: 42ch;
+}
+
+.empty__title {
+  font-size: var(--text-heading);
+  line-height: var(--leading-heading);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.empty__subtitle {
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  color: var(--color-mid-ash);
+}
+
+/* -- Example prompt chips ---------------------------------------------- */
+.empty__prompts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-8);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.empty__prompt {
+  padding: var(--space-8) var(--space-14);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-link);
+  background: var(--color-pure-white);
+  color: var(--color-mid-ash);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.empty__prompt:hover {
+  background: var(--color-hover-veil);
+  color: var(--color-graphite-ink);
+  border-color: var(--color-edge-gray);
+}
+
+/* -- Capability cards -------------------------------------------------- */
+.empty__cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-12);
+  width: 100%;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.empty__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-16);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-card);
+  background: var(--color-pure-white);
+  text-align: left;
+}
+
+.empty__card-icon {
+  display: inline-flex;
+  color: var(--color-graphite-ink);
+}
+
+.empty__card-title {
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-semibold);
+}
+
+.empty__card-body {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-mid-ash);
+}
+
+@media (max-width: 720px) {
+  .empty__cards {
+    grid-template-columns: 1fr;
+  }
+}

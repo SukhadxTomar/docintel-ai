@@ -2,8 +2,8 @@ from time import perf_counter
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from config import settings
-from utils.logger import log
+from app.core.config import settings
+from app.utils.logger import log
 
 
 def split_documents(documents):

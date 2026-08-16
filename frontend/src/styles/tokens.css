@@ -1,0 +1,66 @@
+/*
+ * DocIntel-AI design system — "graphite ink on warm paper".
+ * A light, achromatic, two-pane system. Hierarchy comes from weight + spacing,
+ * never chromatic accents. Elevation is a 1px hairline border, never a shadow.
+ * Errors stay achromatic (a hairline note with a small glyph — no red).
+ *
+ * These tokens are the single source of truth; components reference them only.
+ */
+
+:root {
+  /* -- Color ------------------------------------------------------------ */
+  --color-sidebar-mist: #f9f9f9; /* left pane ground */
+  --color-pure-white: #ffffff; /* conversation ground */
+  --color-graphite-ink: #0d0d0d; /* primary text, primary buttons */
+  --color-mid-ash: #5d5d5d; /* secondary text */
+  --color-hollow: #8f8f8f; /* tertiary / muted captions, placeholders */
+  --color-hairline: rgba(0, 0, 0, 0.1); /* 1px borders (elevation) */
+  --color-hover-veil: rgba(0, 0, 0, 0.05); /* hover fills, subtle surfaces */
+  --color-edge-gray: #e6e6e6; /* stronger dividers / bubble edges */
+  --color-deep-charcoal: rgba(0, 0, 0, 0.5); /* scrims, disabled ink */
+
+  /* Convenience aliases for on-ink text (buttons with graphite fill). */
+  --color-on-ink: var(--color-pure-white);
+
+  /* -- Typography ------------------------------------------------------- */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* Type scale: size / line-height */
+  --text-caption: 14px;
+  --leading-caption: 1.43;
+  --text-body: 16px;
+  --leading-body: 1.5;
+  --text-heading: 24px;
+  --leading-heading: 1.33;
+
+  /* Weights */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* -- Spacing (6–20) --------------------------------------------------- */
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+
+  /* -- Radii ------------------------------------------------------------ */
+  --radius-nav: 10px; /* nav items, cards, buttons */
+  --radius-card: 10px;
+  --radius-button: 10px;
+  --radius-link: 16px; /* pill links / chips */
+  --radius-badge: 0px; /* badges are square */
+
+  /* -- Layout dimensions ------------------------------------------------ */
+  --sidebar-width: 272px;
+  --conversation-max: 768px;
+
+  /* -- Motion ----------------------------------------------------------- */
+  --transition-fast: 120ms ease;
+}

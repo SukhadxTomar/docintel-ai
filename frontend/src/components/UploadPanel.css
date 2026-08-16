@@ -1,0 +1,205 @@
+.upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+/* -- Drop zone --------------------------------------------------------- */
+.upload__drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-20) var(--space-12);
+  border: 1px dashed var(--color-edge-gray);
+  border-radius: var(--radius-card);
+  background: var(--color-pure-white);
+  color: var(--color-mid-ash);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.upload__drop:hover {
+  border-color: var(--color-hollow);
+  background: var(--color-hover-veil);
+}
+
+.upload__drop--active {
+  border-color: var(--color-graphite-ink);
+  border-style: solid;
+  background: var(--color-hover-veil);
+}
+
+.upload__drop--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.upload__drop--disabled:hover {
+  border-color: var(--color-edge-gray);
+  background: var(--color-pure-white);
+}
+
+.upload__drop-icon {
+  color: var(--color-hollow);
+}
+
+.upload__drop-text {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-mid-ash);
+}
+
+.upload__drop-strong {
+  font-weight: var(--weight-medium);
+  color: var(--color-graphite-ink);
+}
+
+.upload__input {
+  display: none;
+}
+
+/* -- Staged files ------------------------------------------------------ */
+.upload__pending {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.upload__pending-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-8);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nav);
+  background: var(--color-pure-white);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.upload__pending-icon {
+  flex: none;
+  color: var(--color-hollow);
+}
+
+.upload__pending-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-graphite-ink);
+}
+
+.upload__pending-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--color-hollow);
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.upload__pending-remove:hover:not(:disabled) {
+  color: var(--color-graphite-ink);
+  background: var(--color-hover-veil);
+}
+
+.upload__pending-remove:disabled {
+  opacity: 0.4;
+}
+
+/* -- Process button (primary, graphite fill) --------------------------- */
+.upload__process {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  padding: var(--space-10) var(--space-14);
+  border-radius: var(--radius-button);
+  background: var(--color-graphite-ink);
+  color: var(--color-on-ink);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  font-weight: var(--weight-medium);
+  transition:
+    background var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.upload__process:hover:not(:disabled) {
+  background: #000;
+}
+
+.upload__process:disabled {
+  background: var(--color-edge-gray);
+  color: var(--color-hollow);
+  cursor: not-allowed;
+}
+
+.upload__spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: var(--color-pure-white);
+  animation: upload-spin 0.7s linear infinite;
+}
+
+@keyframes upload-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* -- Achromatic error note --------------------------------------------- */
+.upload__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-nav);
+  background: var(--color-pure-white);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  color: var(--color-mid-ash);
+}
+
+.upload__error-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--color-hollow);
+}
+
+.upload__error-text {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.upload__error-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--color-hollow);
+}
+
+.upload__error-dismiss:hover {
+  color: var(--color-graphite-ink);
+  background: var(--color-hover-veil);
+}
