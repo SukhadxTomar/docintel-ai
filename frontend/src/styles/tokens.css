@@ -5,12 +5,19 @@
  * Errors stay achromatic (a hairline note with a small glyph — no red).
  *
  * These tokens are the single source of truth; components reference them only.
+ *
+ * Theming: :root defines the light theme. The [data-theme="dark"] block below
+ * re-maps the same color tokens to a dark palette — because components only ever
+ * reference tokens (never raw colors), flipping the `data-theme` attribute on
+ * <html> switches the entire UI. The toggle lives in the header (see useTheme).
  */
 
 :root {
+  color-scheme: light;
+
   /* -- Color ------------------------------------------------------------ */
   --color-sidebar-mist: #f9f9f9; /* left pane ground */
-  --color-pure-white: #ffffff; /* conversation ground */
+  --color-pure-white: #ffffff; /* conversation ground, cards, inputs */
   --color-graphite-ink: #0d0d0d; /* primary text, primary buttons */
   --color-mid-ash: #5d5d5d; /* secondary text */
   --color-hollow: #8f8f8f; /* tertiary / muted captions, placeholders */
@@ -19,8 +26,10 @@
   --color-edge-gray: #e6e6e6; /* stronger dividers / bubble edges */
   --color-deep-charcoal: rgba(0, 0, 0, 0.5); /* scrims, disabled ink */
 
-  /* Convenience aliases for on-ink text (buttons with graphite fill). */
-  --color-on-ink: var(--color-pure-white);
+  /* On-ink: text/icons sitting on a graphite-filled (primary) button. */
+  --color-on-ink: #ffffff;
+  --color-on-ink-faint: rgba(255, 255, 255, 0.4); /* spinner track on ink */
+  --color-ink-hover: #000000; /* primary button hover (goes darker) */
 
   /* -- Typography ------------------------------------------------------- */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
@@ -63,4 +72,28 @@
 
   /* -- Motion ----------------------------------------------------------- */
   --transition-fast: 120ms ease;
+}
+
+/*
+ * Dark theme — "graphite paper, chalk ink". The main conversation ground sits a
+ * touch lighter than the recessed sidebar, and the primary button inverts to a
+ * light fill with dark on-ink text. Only color tokens change; every dimension,
+ * radius, and type token is shared with light above.
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-sidebar-mist: #171717; /* recessed left pane */
+  --color-pure-white: #1e1e1e; /* conversation ground, cards, inputs */
+  --color-graphite-ink: #ececec; /* primary text, primary buttons */
+  --color-mid-ash: #b4b4b4; /* secondary text */
+  --color-hollow: #8f8f8f; /* tertiary / muted captions, placeholders */
+  --color-hairline: rgba(255, 255, 255, 0.12); /* 1px borders (elevation) */
+  --color-hover-veil: rgba(255, 255, 255, 0.06); /* hover fills, subtle surfaces */
+  --color-edge-gray: #3a3a3a; /* stronger dividers / bubble edges */
+  --color-deep-charcoal: rgba(0, 0, 0, 0.6); /* scrims, disabled ink */
+
+  --color-on-ink: #1e1e1e; /* dark text on the now-light primary button */
+  --color-on-ink-faint: rgba(0, 0, 0, 0.35); /* spinner track on the light button */
+  --color-ink-hover: #ffffff; /* primary button hover (goes brighter) */
 }

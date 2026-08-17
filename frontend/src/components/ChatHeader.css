@@ -8,6 +8,14 @@
   max-width: var(--conversation-max);
   margin: 0 auto;
   padding: var(--space-14) var(--space-20);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.chat-header__text {
+  min-width: 0;
 }
 
 .chat-header__title {
@@ -22,4 +30,28 @@
   font-size: var(--text-caption);
   line-height: var(--leading-caption);
   color: var(--color-hollow);
+}
+
+/* -- Theme toggle ------------------------------------------------------ */
+.chat-header__theme {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-nav);
+  border: 1px solid var(--color-hairline);
+  background: var(--color-pure-white);
+  color: var(--color-mid-ash);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.chat-header__theme:hover {
+  background: var(--color-hover-veil);
+  color: var(--color-graphite-ink);
+  border-color: var(--color-edge-gray);
 }

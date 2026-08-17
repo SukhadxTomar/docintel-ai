@@ -139,7 +139,7 @@
 }
 
 .upload__process:hover:not(:disabled) {
-  background: #000;
+  background: var(--color-ink-hover);
 }
 
 .upload__process:disabled {
@@ -152,8 +152,8 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.4);
-  border-top-color: var(--color-pure-white);
+  border: 2px solid var(--color-on-ink-faint);
+  border-top-color: var(--color-on-ink);
   animation: upload-spin 0.7s linear infinite;
 }
 

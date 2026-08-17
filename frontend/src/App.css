@@ -57,7 +57,7 @@
 }
 
 .conversation__retry:hover {
-  background: #000;
+  background: var(--color-ink-hover);
 }
 
 @media (max-width: 640px) {

@@ -36,6 +36,21 @@ select {
   color: inherit;
 }
 
+/* Fade the main grounds when the theme flips (reduced-motion users opt out via
+ * the rule at the bottom of this file). Interactive elements already animate
+ * their own background/border via --transition-fast. */
+body,
+.sidebar,
+.conversation,
+.chat-header,
+.composer__field,
+.msg__bubble {
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
 button {
   cursor: pointer;
   background: none;

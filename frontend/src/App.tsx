@@ -6,10 +6,12 @@ import { IconAlert } from './components/icons'
 import { MessageList } from './components/MessageList'
 import { Sidebar } from './components/Sidebar'
 import { useChat } from './hooks/useChat'
+import { useTheme } from './hooks/useTheme'
 import './App.css'
 
 export default function App() {
   const chat = useChat()
+  const { theme, toggleTheme } = useTheme()
   const [draft, setDraft] = useState('')
   const composerRef = useRef<HTMLTextAreaElement>(null)
 
@@ -46,7 +48,7 @@ export default function App() {
       />
 
       <main className="conversation">
-        <ChatHeader status={chat.status} />
+        <ChatHeader status={chat.status} theme={theme} onToggleTheme={toggleTheme} />
 
         {showBlocker ? (
           <div className="conversation__blocker">

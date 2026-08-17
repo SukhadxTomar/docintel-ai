@@ -100,7 +100,7 @@ export function Sidebar({
           <IconTrash size={16} />
           <span>Clear chat</span>
         </button>
-        <p className="sidebar__foot-note">Hybrid RAG · Gemini + FAISS</p>
+        <p className="sidebar__foot-note">Hybrid RAG · OpenRouter + FAISS</p>
       </div>
     </aside>
   )

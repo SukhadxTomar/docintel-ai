@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ``backend/`` root. This file is ``backend/app/core/config.py`` so parents[2]
@@ -44,8 +45,25 @@ class Settings(BaseSettings):
     retriever_fetch_k: int = 10  # candidates fetched before MMR reranking
     retriever_lambda_mult: float = 0.7  # MMR relevance vs diversity (higher = more relevance)
 
-    # LLM (models/llm_model.py)
-    llm_model: str = "gemini-2.5-flash"
+    # -- LLM via OpenRouter (models/llm_model.py) --------------------------------
+    # OpenRouter is OpenAI-compatible, so the app needs exactly two things from
+    # you: an API key and a model id. Both accept the conventional bare env names
+    # (OPENROUTER_API_KEY / OPENROUTER_MODEL) as well as DOCINTEL_-prefixed ones.
+    # Model ids use OpenRouter's "<provider>/<model>" form, e.g.
+    # "openai/gpt-4o-mini", "google/gemini-2.5-flash", "anthropic/claude-3.5-sonnet".
+    # Browse every available model at https://openrouter.ai/models.
+    openrouter_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("OPENROUTER_API_KEY", "DOCINTEL_OPENROUTER_API_KEY"),
+    )
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        validation_alias=AliasChoices("OPENROUTER_BASE_URL", "DOCINTEL_OPENROUTER_BASE_URL"),
+    )
+    llm_model: str = Field(
+        default="openai/gpt-4o-mini",
+        validation_alias=AliasChoices("OPENROUTER_MODEL", "DOCINTEL_LLM_MODEL"),
+    )
     llm_temperature: float = 0.3
 
     # Embeddings (ingestion/embeddings.py + vector_store.py log sites)

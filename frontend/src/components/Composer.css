@@ -58,7 +58,7 @@
 }
 
 .composer__send:hover:not(:disabled) {
-  background: #000;
+  background: var(--color-ink-hover);
 }
 
 .composer__send:disabled {

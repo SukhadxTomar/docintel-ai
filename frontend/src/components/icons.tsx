@@ -138,3 +138,29 @@ export function IconQuote(props: IconProps) {
     </Icon>
   )
 }
+
+/** Theme: light mode (a sun). Shown when the dark theme is active. */
+export function IconSun(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="M4.9 4.9l1.4 1.4" />
+      <path d="M17.7 17.7l1.4 1.4" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="M4.9 19.1l1.4-1.4" />
+      <path d="M17.7 6.3l1.4-1.4" />
+    </Icon>
+  )
+}
+
+/** Theme: dark mode (a crescent moon). Shown when the light theme is active. */
+export function IconMoon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" />
+    </Icon>
+  )
+}
