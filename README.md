@@ -9,12 +9,14 @@ That switching is the whole point of this project. Most RAG chatbots either alwa
 - Upload one or more PDFs and chat with them through a clean React interface
 - Hybrid routing: every question is scored against your documents before deciding whether to answer from the PDF or from general knowledge
 - Token-by-token streaming so responses appear live, the way ChatGPT-style interfaces do
-- Source attribution: every answer tells you whether it came from your documents or general AI knowledge, and which file it pulled from
+- Source attribution: every answer tells you whether it came from your documents or general AI knowledge — and for document answers, the file and page it came from
 - Console logging throughout the pipeline, so if something goes wrong (or you're just curious), you can see exactly what the router decided and why
 
 ## How it works, in one paragraph
 
 When you upload a PDF, it gets split into chunks, embedded, and stored in a FAISS vector index. When you ask a question, the router runs a similarity search against that index. If the best match clears a confidence threshold (0.35 by default), your question and the matching chunks get sent to the RAG chain, which answers using only that retrieved context. If nothing scores high enough — or you haven't uploaded a PDF at all — the question falls through to a general LLM chain that answers from the model's own knowledge. Either way, the answer streams back token by token.
+
+For a deeper look — the ingestion pipeline, routing logic, SSE streaming, and how the frontend and backend fit together — see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
 
 ## Tech stack
 
@@ -147,21 +149,38 @@ changes needed.
 `DOCINTEL_CHUNK_SIZE`, `DOCINTEL_CHUNK_OVERLAP`, `DOCINTEL_CORS_ALLOW_ORIGINS`.
 See `backend/app/core/config.py` for the full list.
 
+## API
+
+The backend is a FastAPI service. With it running, interactive API docs (Swagger UI)
+are at **http://localhost:8000/docs**. The main endpoints:
+
+| Method & path | Purpose |
+|---|---|
+| `POST /api/sessions` | Create a chat session |
+| `GET /api/sessions/{id}` | Session status |
+| `GET /api/sessions/{id}/messages` | Message history |
+| `POST /api/sessions/{id}/documents` | Upload + process PDFs (multipart) |
+| `POST /api/sessions/{id}/chat` | Stream a chat turn (SSE) |
+| `POST /api/sessions/{id}/clear` | Clear the conversation |
+| `DELETE /api/sessions/{id}` | Delete the session |
+
+Chat replies stream as Server-Sent Events (`token`, `sources`, `error`, `done`). The
+event shapes and full request flow are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ## Why this design
 
 A lot of "production-grade" RAG demos skip the routing problem entirely — they assume every question is about the uploaded document. That breaks the moment a user asks something casual. DocIntel-AI treats routing as a first-class decision, logs the reasoning behind every choice (retrieved chunks, scores, threshold, which chain ran, how long it took), and falls back gracefully if the vector store isn't ready yet. The goal was something that feels less like a toy demo and more like a system you could actually hand to someone.
 
 ## Known limitations
 
-Being upfront about where the current implementation falls short of the original design intent — these are the next things being worked on:
+Being upfront about where the current implementation falls short — these are the next things to improve:
 
-- **Embeddings aren't normalized yet.** The similarity threshold is currently tuned against FAISS's default L2-based relevance score, not true cosine similarity. It works, but the number isn't as principled as it should be — normalizing the embeddings and re-tuning the threshold is next.
-- **MMR retrieval is configured but not wired into the live routing path.** The router currently calls plain top-k similarity search directly on the vector store rather than going through the MMR retriever, so results aren't diversity-reranked yet.
-- **Citations show filename only, not page number**, even though page-level metadata is already tracked internally — this is a UI gap, not a data gap.
-- **No index persistence.** Uploading a new PDF rebuilds the FAISS index from scratch, so earlier documents in the same session get replaced rather than accumulated, and everything resets on restart.
-- **Logging is human-readable console output, not structured/JSON** — fine for local debugging, not yet suited for production observability.
+- **Embeddings aren't normalized.** The routing threshold is tuned against FAISS's L2-based relevance score, not true cosine similarity. It works, but the number isn't as principled as it should be — normalizing the embeddings and re-tuning the threshold is next.
+- **MMR retrieval is configured but not used for routing.** The router runs top-k similarity search directly on the FAISS store; the MMR retriever is built but only the score-less fallback path would use it, which FAISS doesn't take. So results aren't diversity-reranked yet.
+- **Uploads replace, they don't accumulate.** Processing a new PDF rebuilds the session's index from the new files only and resets the conversation — there's no way to add to an existing document set yet.
+- **Sessions are in-memory.** The FAISS index is persisted to disk per session, but the session *registry* is not, so restarting the backend orphans the saved index and the frontend falls back to a fresh session.
 
-None of these are architectural dead ends — the hybrid routing design itself holds up — they're the concrete next steps now that the core has moved from a Streamlit demo to a FastAPI + React service.
+None of these are architectural dead ends — the hybrid routing design holds up. They're the concrete next steps now that the core has moved from a Streamlit demo to a FastAPI + React service.
 
 ## Status
 
