@@ -10,9 +10,10 @@ retune:
 
 Import the shared ``settings`` singleton instead of hardcoding these values.
 
-Note: router retrieval tunables (``HYBRID_RAG_TOP_K`` /
-``HYBRID_RAG_SIMILARITY_THRESHOLD``) intentionally remain in ``chains/router.py``
-— they are part of the routing/threshold logic, not general config hygiene.
+Note: the routing threshold (``HYBRID_RAG_SIMILARITY_THRESHOLD``) intentionally
+remains in ``chains/router.py`` — it is part of the routing decision, not general
+config hygiene. The retrieval *structure* (candidate/final counts, RRF constant)
+lives here as ``retrieval_candidates_k`` / ``final_context_k`` / ``rrf_k``.
 """
 from __future__ import annotations
 
@@ -40,10 +41,25 @@ class Settings(BaseSettings):
     chunk_size: int = 800
     chunk_overlap: int = 100
 
-    # Retriever / MMR search (retrievers/retriever.py)
-    retriever_k: int = 4  # final number of chunks returned to the LLM
-    retriever_fetch_k: int = 10  # candidates fetched before MMR reranking
-    retriever_lambda_mult: float = 0.7  # MMR relevance vs diversity (higher = more relevance)
+    # -- Hybrid retrieval (retrievers/hybrid_retriever.py) -----------------------
+    # BM25 (keyword) + FAISS (vector) candidates fused with Reciprocal Rank
+    # Fusion. Both retrievers fetch ``retrieval_candidates_k`` candidates; RRF
+    # merges the two rankings and the top ``final_context_k`` chunks become the
+    # RAG context. ``rrf_k`` is the RRF damping constant (higher = smaller gap
+    # between ranks). The conventional bare env names (RETRIEVAL_CANDIDATES_K /
+    # FINAL_CONTEXT_K / RRF_K) work alongside the DOCINTEL_-prefixed ones.
+    retrieval_candidates_k: int = Field(
+        default=20,
+        validation_alias=AliasChoices("RETRIEVAL_CANDIDATES_K", "DOCINTEL_RETRIEVAL_CANDIDATES_K"),
+    )
+    final_context_k: int = Field(
+        default=4,
+        validation_alias=AliasChoices("FINAL_CONTEXT_K", "DOCINTEL_FINAL_CONTEXT_K"),
+    )
+    rrf_k: int = Field(
+        default=60,
+        validation_alias=AliasChoices("RRF_K", "DOCINTEL_RRF_K"),
+    )
 
     # -- LLM via OpenRouter (models/llm_model.py) --------------------------------
     # OpenRouter is OpenAI-compatible, so the app needs exactly two things from

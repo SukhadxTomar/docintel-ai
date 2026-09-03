@@ -1,99 +1,119 @@
+"""Query router: decide RAG vs. general LLM, and hand RAG the fused context.
+
+The router no longer talks to FAISS/BM25 directly — it consumes a
+:class:`~app.retrievers.hybrid_retriever.HybridRetrievalResult` produced by the
+hybrid retriever (BM25 + FAISS fused with RRF). Two distinct signals come out of
+that result:
+
+* **Routing signal** — the best FAISS *relevance* score (0..1). This is compared
+  against ``HYBRID_RAG_SIMILARITY_THRESHOLD`` (0.35) to decide whether the
+  document is relevant to the question at all. It is deliberately NOT the RRF
+  score: RRF scores are tiny rank-fusion values (~1/61) on an arbitrary scale, so
+  the 0.35 threshold would be meaningless against them.
+* **Context ranking** — the RRF-fused top-``final_context_k`` chunks
+  (``result.documents``). When the router chooses RAG, these are the chunks the
+  RAG chain actually answers from.
+
+So RRF decides *which* chunks are the best context; the FAISS relevance signal
+decides *whether* to use them. Everything else (RAG chain, LLM fallback, graceful
+degradation when scores are unavailable) is unchanged.
+"""
 from __future__ import annotations
 
-import math
 import os
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Literal
 
-from app.utils.doc_utils import (
-    context_length,
-    page_label,
-    source_name,
-    source_names,
-    vector_store_from_retriever,
-)
+from app.retrievers.hybrid_retriever import HybridRetrievalResult
+from app.utils.doc_utils import page_label, source_name, source_names
 from app.utils.logger import log
 
 RouteName = Literal["llm", "rag"]
 
-DEFAULT_TOP_K = int(os.getenv("HYBRID_RAG_TOP_K", "4"))
+# The routing threshold stays here (it is a routing decision, not general config
+# hygiene). The retrieval structure — candidate/final counts and the RRF constant
+# — lives in ``core/config.py``.
 DEFAULT_SIMILARITY_THRESHOLD = float(
     os.getenv("HYBRID_RAG_SIMILARITY_THRESHOLD", "0.35")
 )
+
+# How many candidate rows to print per ranked list (FAISS / BM25 / RRF). Purely a
+# logging cap; retrieval always fuses the full candidate set.
+_MAX_LOGGED = 20
 
 
 @dataclass(frozen=True)
 class RouteDecision:
     route: RouteName
     reason: str
-    docs: list[Any] = field(default_factory=list)
-    scores: list[float | None] = field(default_factory=list)
-    best_score: float | None = None
+    docs: list[Any] = field(default_factory=list)  # RRF-fused chunks used for RAG
+    best_score: float | None = None  # FAISS best relevance (the routing signal)
     used_scores: bool = False
     threshold: float | None = None
     retrieval_time_ms: float | None = None
     total_routing_time_ms: float | None = None
-    retrieved_docs: list[Any] = field(default_factory=list)
-    retrieved_scores: list[float | None] = field(default_factory=list)
+    retrieved_docs: list[Any] = field(default_factory=list)  # final fused chunks
     context_length: int = 0
-
-
-def _top_k(retriever: Any) -> int:
-    search_kwargs = getattr(retriever, "search_kwargs", None) or {}
-    return int(search_kwargs.get("k") or DEFAULT_TOP_K)
-
-
-def _normalize_distance_score(score: float) -> float:
-    """Convert distance-style vector scores into a 0..1 confidence value."""
-    if math.isnan(score) or math.isinf(score):
-        return 0.0
-    return 1.0 / (1.0 + max(float(score), 0.0))
-
-
-def _coerce_relevance_score(score: float) -> float:
-    if math.isnan(score) or math.isinf(score):
-        return 0.0
-    return max(0.0, min(float(score), 1.0))
-
-
-def _retrieve_with_scores(
-    vector_store: Any,
-    question: str,
-    k: int,
-) -> list[tuple[Any, float]] | None:
-    """Return docs with comparable 0..1 confidence scores when possible."""
-    if hasattr(vector_store, "similarity_search_with_relevance_scores"):
-        results = vector_store.similarity_search_with_relevance_scores(question, k=k)
-        return [(doc, _coerce_relevance_score(float(score))) for doc, score in results]
-
-    if hasattr(vector_store, "similarity_search_with_score"):
-        results = vector_store.similarity_search_with_score(question, k=k)
-        return [(doc, _normalize_distance_score(float(score))) for doc, score in results]
-
-    return None
-
-
-def _retrieve_without_scores(retriever: Any, question: str) -> list[Any]:
-    if hasattr(retriever, "invoke"):
-        return list(retriever.invoke(question))
-
-    if hasattr(retriever, "get_relevant_documents"):
-        return list(retriever.get_relevant_documents(question))
-
-    return []
+    result: HybridRetrievalResult | None = None  # full hybrid result, for logging
 
 
 def _score_label(score: float | None) -> str:
     return "N/A" if score is None else f"{score:.4f}"
 
 
-def _top_score_labels(scores: list[float | None], limit: int = 3) -> list[str]:
-    return [_score_label(score) for score in scores[:limit]]
-
-
 def _time_label(value: float | None) -> str:
     return "N/A" if value is None else f"{value:.2f} ms"
+
+
+def _candidate_row(rank: int, doc: Any, score: float | None, *, score_fmt: str) -> str:
+    """One content-free candidate line: rank | source | page [| score].
+
+    Deliberately logs only source + page + rank + score — never ``page_content`` —
+    so full document text never lands in the logs.
+    """
+    metadata = getattr(doc, "metadata", None) or {}
+    page = page_label(metadata.get("page"))
+    base = f"{rank:>2}. {source_name(doc)} | Page {page}"
+    if score is None:
+        return base
+    return f"{base} | {score_fmt}: {score:.4f}" if score_fmt else base
+
+
+def _log_faiss(result: HybridRetrievalResult) -> None:
+    log.info(f"FAISS Vector Candidates (top {result.candidates_k}, by relevance)")
+    if not result.faiss_ranked:
+        log.list_item("None")
+        return
+    for rank, (doc, score) in enumerate(result.faiss_ranked[:_MAX_LOGGED], start=1):
+        log.list_item(_candidate_row(rank, doc, score, score_fmt="relevance"))
+
+
+def _log_bm25(result: HybridRetrievalResult) -> None:
+    log.info(f"BM25 Keyword Candidates (top {result.candidates_k}, by rank)")
+    if not result.bm25_ranked:
+        log.list_item("None")
+        return
+    for rank, doc in enumerate(result.bm25_ranked[:_MAX_LOGGED], start=1):
+        log.list_item(_candidate_row(rank, doc, None, score_fmt=""))
+
+
+def _log_fused(result: HybridRetrievalResult) -> None:
+    log.info("RRF Fused Ranking (both lists merged by rank)")
+    if not result.fused:
+        log.list_item("None")
+        return
+    for rank, (doc, score) in enumerate(result.fused[:_MAX_LOGGED], start=1):
+        log.list_item(_candidate_row(rank, doc, score, score_fmt="rrf"))
+
+
+def _log_final(documents: list[Any]) -> None:
+    log.info("Final Context (top-k after fusion)")
+    if not documents:
+        log.list_item("None")
+        return
+    for rank, doc in enumerate(documents, start=1):
+        log.list_item(_candidate_row(rank, doc, None, score_fmt=""))
 
 
 def _log_router_decision(
@@ -102,51 +122,37 @@ def _log_router_decision(
     decision: RouteDecision,
 ) -> None:
     log.section("NEW USER QUERY")
-    log.kv("Question", question)
+    log.kv("Query", question)
     log.kv("Retriever Exists", "Yes" if retriever_available else "No")
+
+    result = decision.result
+    if retriever_available and result is not None:
+        log.divider()
+        _log_faiss(result)
+        log.divider()
+        _log_bm25(result)
+        log.divider()
+        _log_fused(result)
+        log.divider()
+        _log_final(decision.retrieved_docs)
+
+        log.divider()
+        log.info("Routing")
+        log.kv("Candidates K (per retriever)", result.candidates_k)
+        log.kv("Final Context K", result.final_k)
+        log.kv("RRF K", result.rrf_k)
+        log.kv("FAISS Best Relevance (routing signal)", _score_label(decision.best_score))
+        log.kv("Threshold", "N/A" if decision.threshold is None else f"{decision.threshold:.4f}")
+        log.kv("Context Length", decision.context_length)
+        log.kv("Retrieval Time", _time_label(decision.retrieval_time_ms))
+
+    log.divider()
     log.kv("Router Decision", "RAG" if decision.route == "rag" else "GENERAL LLM")
     log.kv("Reason", decision.reason)
-
-    if not retriever_available:
-        log.kv("Source", "General AI Knowledge")
-        log.kv("Routing Time", _time_label(decision.total_routing_time_ms))
-        return
-
-    log.divider()
-    log.info("Retriever")
-    log.kv("Retrieved Chunks", len(decision.retrieved_docs))
-    log.kv("Retrieved PDF Names", ", ".join(source_names(decision.retrieved_docs)) or "None")
-    log.kv("Chunks Selected For RAG", len(decision.docs))
-    log.kv("Similarity Scores", "N/A" if not decision.used_scores else [_score_label(score) for score in decision.retrieved_scores])
-    log.kv("Top 3 Scores", "N/A" if not decision.used_scores else _top_score_labels(decision.retrieved_scores))
-    log.kv("Threshold", "N/A" if decision.threshold is None else f"{decision.threshold:.4f}")
-    log.kv("Best Similarity Score", _score_label(decision.best_score))
-    log.kv("Retrieval Time", _time_label(decision.retrieval_time_ms))
-
-    if decision.retrieved_docs:
-        log.info("Documents")
-        for index, doc in enumerate(decision.retrieved_docs, start=1):
-            metadata = getattr(doc, "metadata", None) or {}
-            page = page_label(metadata.get("page"))
-            score = decision.retrieved_scores[index - 1] if index - 1 < len(decision.retrieved_scores) else None
-            preview = (getattr(doc, "page_content", "") or "").strip().replace("\n", " ")[:180]
-            log.list_item(f"{index}. {source_name(doc)} | Page {page} | Score: {_score_label(score)}")
-            if preview:
-                log.list_item(f"   Preview: {preview}")
-    else:
-        log.info("Documents: None")
-
-    if not decision.used_scores:
-        log.info("Similarity scores unavailable; router cannot apply the vector-score threshold.")
-
-    log.divider()
-    log.info("Prompt")
-    log.kv("Context Length", decision.context_length)
-    log.kv("Question Length", len(question))
-
-    log.divider()
-    log.info("LLM Response")
-    log.kv("Source", ", ".join(source_names(decision.docs)) if decision.route == "rag" else "General AI Knowledge")
+    log.kv(
+        "Source",
+        ", ".join(source_names(decision.docs)) if decision.route == "rag" else "General AI Knowledge",
+    )
     log.kv("Routing Time", _time_label(decision.total_routing_time_ms))
 
 
@@ -160,15 +166,14 @@ def _finish(
         route=decision.route,
         reason=decision.reason,
         docs=decision.docs,
-        scores=decision.scores,
         best_score=decision.best_score,
         used_scores=decision.used_scores,
         threshold=decision.threshold,
         retrieval_time_ms=decision.retrieval_time_ms,
         total_routing_time_ms=(perf_counter() - started_at) * 1000,
         retrieved_docs=decision.retrieved_docs,
-        retrieved_scores=decision.retrieved_scores,
         context_length=decision.context_length,
+        result=decision.result,
     )
     _log_router_decision(question, retriever_available, final_decision)
     return final_decision
@@ -179,122 +184,90 @@ def route_query(
     question: str,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> RouteDecision:
-    """Route by retrieval quality and reuse the same chunks for RAG."""
+    """Route by hybrid retrieval quality and reuse the fused chunks for RAG.
+
+    The retriever runs BM25 + FAISS and fuses them with RRF; this function only
+    reads the result. RAG is chosen when the FAISS best relevance score clears the
+    threshold, and the RRF-fused top-k chunks become the RAG context.
+    """
     started_at = perf_counter()
 
     if retriever is None:
-        log.section("Router Retrieval Debug")
-        log.kv("Attempting Retrieval", "NO")
-        log.kv("Retrieval Skipped Reason", "Retriever is None.")
         return _finish(
             question,
             False,
             RouteDecision(
                 "llm",
                 "No document retriever available.",
+                threshold=similarity_threshold,
                 retrieval_time_ms=0.0,
             ),
             started_at,
         )
 
-    retrieval_started_at = perf_counter()
-
     try:
-        k = _top_k(retriever)
-        vector_store = vector_store_from_retriever(retriever)
-        log.section("Router Retrieval Debug")
-        log.kv("Attempting Retrieval", "YES")
-        log.kv("Retriever Type", type(retriever).__name__)
-        log.kv("Vector Store Exists", "YES" if vector_store is not None else "NO")
+        result = retriever.retrieve(question)
+        best_score = result.faiss_best_score
 
-        if vector_store is not None:
-            scored_results = _retrieve_with_scores(vector_store, question, k)
+        # Routing signal = FAISS relevance, NOT the RRF score. RRF only ordered the
+        # context; whether the document is relevant at all is a vector-space call.
+        if result.used_scores and best_score is not None and best_score >= similarity_threshold:
+            return _finish(
+                question,
+                True,
+                RouteDecision(
+                    "rag",
+                    f"Best FAISS relevance ({best_score:.4f}) met the threshold ({similarity_threshold:.4f}); "
+                    f"answering from the top {result.final_k} RRF-fused chunks.",
+                    docs=result.documents,
+                    best_score=best_score,
+                    used_scores=True,
+                    threshold=similarity_threshold,
+                    retrieval_time_ms=result.retrieval_time_ms,
+                    retrieved_docs=result.documents,
+                    context_length=result.context_length,
+                    result=result,
+                ),
+                started_at,
+            )
 
-            if scored_results is not None:
-                retrieval_time_ms = (perf_counter() - retrieval_started_at) * 1000
-                docs = [doc for doc, _ in scored_results]
-                scores = [score for _, score in scored_results]
-                best_score = max(scores, default=None)
-
-                if best_score is not None and best_score >= similarity_threshold:
-                    return _finish(
-                        question,
-                        True,
-                        RouteDecision(
-                            "rag",
-                            f"Best vector similarity score ({best_score:.4f}) met the threshold ({similarity_threshold:.4f}).",
-                            docs=docs,
-                            scores=scores,
-                            best_score=best_score,
-                            used_scores=True,
-                            threshold=similarity_threshold,
-                            retrieval_time_ms=retrieval_time_ms,
-                            retrieved_docs=docs,
-                            retrieved_scores=scores,
-                            context_length=context_length(docs),
-                        ),
-                        started_at,
-                    )
-
-                return _finish(
-                    question,
-                    True,
-                    RouteDecision(
-                        "llm",
-                        (
-                            "No retrieved chunk met the vector similarity threshold."
-                            if best_score is not None
-                            else "Retriever returned no scored chunks."
-                        ),
-                        docs=[],
-                        scores=[],
-                        best_score=best_score,
-                        used_scores=True,
-                        threshold=similarity_threshold,
-                        retrieval_time_ms=retrieval_time_ms,
-                        retrieved_docs=docs,
-                        retrieved_scores=scores,
-                        context_length=0,
-                    ),
-                    started_at,
-                )
-
-        if vector_store is None:
-            log.kv("Retrieval Skipped Reason", "Retriever has no vectorstore/vector_store attribute.")
+        if not result.used_scores:
+            reason = "FAISS relevance scores unavailable, so the routing threshold could not be evaluated."
+        elif best_score is None:
+            reason = "Hybrid retrieval returned no candidates."
         else:
-            log.kv("Retrieval Skipped Reason", "Vector store does not expose scored similarity search.")
+            reason = (
+                f"Best FAISS relevance ({best_score:.4f}) fell below the threshold "
+                f"({similarity_threshold:.4f}); treated as unrelated to the documents."
+            )
 
-        docs = _retrieve_without_scores(retriever, question)
-        retrieval_time_ms = (perf_counter() - retrieval_started_at) * 1000
         return _finish(
             question,
             True,
             RouteDecision(
                 "llm",
-                "Similarity scores unavailable, so the vector-score threshold could not be evaluated.",
+                reason,
                 docs=[],
-                scores=[],
-                best_score=None,
-                used_scores=False,
+                best_score=best_score,
+                used_scores=result.used_scores,
                 threshold=similarity_threshold,
-                retrieval_time_ms=retrieval_time_ms,
-                retrieved_docs=docs,
-                retrieved_scores=[None] * len(docs),
+                retrieval_time_ms=result.retrieval_time_ms,
+                retrieved_docs=result.documents,
                 context_length=0,
+                result=result,
             ),
             started_at,
         )
 
     except Exception as exc:
-        retrieval_time_ms = (perf_counter() - retrieval_started_at) * 1000
         return _finish(
             question,
             True,
             RouteDecision(
                 "llm",
                 f"Retrieval failed, so routing fell back to the normal LLM chain: {exc}",
-                retrieval_time_ms=retrieval_time_ms,
+                threshold=similarity_threshold,
+                retrieval_time_ms=None,
             ),
             started_at,
         )
-
