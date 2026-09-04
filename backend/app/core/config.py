@@ -10,10 +10,18 @@ retune:
 
 Import the shared ``settings`` singleton instead of hardcoding these values.
 
-Note: the routing threshold (``HYBRID_RAG_SIMILARITY_THRESHOLD``) intentionally
-remains in ``chains/router.py`` — it is part of the routing decision, not general
-config hygiene. The retrieval *structure* (candidate/final counts, RRF constant)
-lives here as ``retrieval_candidates_k`` / ``final_context_k`` / ``rrf_k``.
+Note: the RAG-vs-LLM routing thresholds — the whole *evidence policy* (the
+semantic ``HYBRID_RAG_SIMILARITY_THRESHOLD`` plus the lexical and cross-retriever
+agreement knobs) — intentionally remain in ``chains/router.py`` as
+``EvidencePolicy``: they are part of the routing *decision*, not general config
+hygiene. The retrieval *structure* (candidate/final counts, RRF constant) lives
+here as ``retrieval_candidates_k`` / ``final_context_k`` / ``rrf_k``.
+
+The **agentic orchestration** knobs (``agentic_rag_enabled`` and friends) *do*
+live here: they are structural switches for the orchestration layer
+(``app/agents/``) — whether it runs at all, how many self-healing retrieval
+attempts it may make, and the confidence guideline it uses — not per-signal
+routing thresholds. See ``chains/chat_chain.py`` for where the switch is read.
 """
 from __future__ import annotations
 
@@ -59,6 +67,40 @@ class Settings(BaseSettings):
     rrf_k: int = Field(
         default=60,
         validation_alias=AliasChoices("RRF_K", "DOCINTEL_RRF_K"),
+    )
+
+    # -- Agentic RAG orchestration (agents/orchestrator.py) ----------------------
+    # A controlled orchestration layer *on top of* the hybrid retriever. It
+    # understands the query, judges whether the retrieved evidence can actually
+    # answer the ORIGINAL question, and self-heals by rewriting the query and
+    # retrying (bounded) before answering or falling back. These are structural
+    # switches, not per-signal routing thresholds (those stay in EvidencePolicy).
+    #
+    #   * enabled           — master switch. When False the chain uses the legacy
+    #                         one-pass hybrid router (chains/router.py) unchanged.
+    #   * max_attempts      — hard cap on retrieval attempts per query (>=1). The
+    #                         self-healing loop rewrites + retries up to this many
+    #                         times, so it can never loop forever.
+    #   * evidence_threshold — a confidence *guideline* (0..1) the evidence
+    #                         evaluator uses when blending its LLM judgement with
+    #                         the hybrid signals. It is deliberately NOT a single
+    #                         hard score gate replacing the old FAISS threshold.
+    # Bare env names (AGENTIC_*) work alongside the DOCINTEL_-prefixed ones.
+    agentic_rag_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("AGENTIC_RAG_ENABLED", "DOCINTEL_AGENTIC_RAG_ENABLED"),
+    )
+    agentic_max_retrieval_attempts: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "AGENTIC_MAX_RETRIEVAL_ATTEMPTS", "DOCINTEL_AGENTIC_MAX_RETRIEVAL_ATTEMPTS"
+        ),
+    )
+    agentic_evidence_threshold: float = Field(
+        default=0.70,
+        validation_alias=AliasChoices(
+            "AGENTIC_EVIDENCE_THRESHOLD", "DOCINTEL_AGENTIC_EVIDENCE_THRESHOLD"
+        ),
     )
 
     # -- LLM via OpenRouter (models/llm_model.py) --------------------------------

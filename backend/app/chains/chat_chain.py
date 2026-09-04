@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Iterator
 
+from app.agents.orchestrator import AgenticOrchestrator
+from app.core.config import settings
 from app.utils.doc_utils import (
     context_length,
     indexed_chunks,
@@ -49,6 +51,40 @@ class HybridChatChain:
     def __post_init__(self) -> None:
         self.llm_chain = create_llm_chain()
         self.rag_chain = create_rag_chain()
+        # Built lazily on first use (only when a retriever exists and the agentic
+        # layer is enabled). Holds no per-query state, so one instance is reused.
+        self._orchestrator: AgenticOrchestrator | None = None
+
+    def _get_orchestrator(self) -> AgenticOrchestrator | None:
+        if self.retriever is None:
+            return None
+        if self._orchestrator is None:
+            self._orchestrator = AgenticOrchestrator(self.retriever)
+        return self._orchestrator
+
+    def _route(self, question: str, chat_history: str) -> RouteDecision | None:
+        """Decide RAG vs. LLM: agentic orchestrator (default) or legacy router.
+
+        The orchestrator returns the same :class:`RouteDecision` the legacy router
+        returns, so all streaming / sources / SSE code below is identical either
+        way. Resilience is layered: an orchestrator error falls back to the one-pass
+        ``route_query``; a router error falls back to the general LLM (``None``).
+        When ``AGENTIC_RAG_ENABLED=false`` the orchestrator is skipped entirely and
+        routing is exactly the legacy single-pass behaviour.
+        """
+        if settings.agentic_rag_enabled:
+            orchestrator = self._get_orchestrator()
+            if orchestrator is not None:
+                try:
+                    return orchestrator.run(question, chat_history)
+                except Exception as exc:
+                    log.error(f"Agentic orchestration failed; falling back to legacy router: {exc}")
+
+        try:
+            return route_query(self.retriever, question)
+        except Exception as exc:
+            log.error(f"Router failed; falling back to LLM: {exc}")
+            return None
 
     def stream(self, inputs: dict[str, Any]) -> Iterator[dict[str, Any]]:
         """Yield streaming events for one question.
@@ -76,11 +112,7 @@ class HybridChatChain:
         log.kv("Vector Store Exists", "YES" if vector_store_from_retriever(self.retriever) is not None else "NO")
         log.kv("Indexed Chunks", indexed_chunks(self.retriever))
 
-        try:
-            decision = route_query(self.retriever, question)
-        except Exception as exc:
-            log.error(f"Router failed; falling back to LLM: {exc}")
-            decision = None
+        decision = self._route(question, chat_history)
 
         self.last_decision = decision
 
