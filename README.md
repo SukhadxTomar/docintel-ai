@@ -18,8 +18,6 @@ That switching is the whole point of this project. Most RAG chatbots either alwa
 
 When you upload a PDF, it gets split into chunks, embedded, and stored in a FAISS vector index; the same chunks are also indexed for BM25 keyword search. When you ask a question, both retrievers fetch their top candidates and Reciprocal Rank Fusion merges the two rankings into a single best-of-both list — the top few fused chunks become the candidate context. Routing is a separate decision, and it no longer rests on the vector score alone — in fact it no longer rests on any fixed similarity threshold. An **agentic orchestration layer** takes over: it first decides whether your question even needs the documents, then — for document questions — retrieves once and asks a focused question of the evidence, *"can the original question actually be answered from these chunks?"*, judging the real chunk content rather than trusting a score. The three hybrid signals — **semantic** (best FAISS relevance), **lexical** (do the top BM25 chunks actually contain the question's distinctive keywords?), and **agreement** (did both retrievers independently rank the same chunk near the top?) — are folded in as advisory evidence, not as gates. If the evidence is sufficient, your question and the supporting chunks go to the RAG chain, which answers using only that retrieved context. If it isn't, the agent **rewrites the query and retries** (bounded by a configurable cap) — this is what recovers exact-token misses like *deduction* vs. *deductions* — and if evidence is still missing after every attempt it answers strictly from the best chunks (reporting that it couldn't find the information rather than inventing it), or, when nothing relevant was retrieved at all, falls through to a general LLM chain. Either way, the answer streams back token by token.
 
-For a deeper look — the ingestion pipeline, routing logic, SSE streaming, and how the frontend and backend fit together — see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
-
 ## Tech stack
 
 | Layer | Tool |
@@ -38,13 +36,19 @@ For a deeper look — the ingestion pipeline, routing logic, SSE streaming, and 
 .
 ├── backend/                        # FastAPI service
 │   ├── app/
-│   │   ├── main.py                 # App + CORS + startup (creates storage dirs)
-│   │   ├── api/routes/             # sessions, documents (upload), chat (SSE stream)
+│   │   ├── main.py                 # App + CORS + startup lifespan (creates storage dirs) + /api/health
+│   │   ├── api/
+│   │   │   ├── routes/             # sessions, documents (upload), chat (SSE stream)
+│   │   │   ├── schemas.py          # Pydantic request/response models
+│   │   │   └── deps.py             # shared route deps (session lookup, 404 if missing)
+│   │   ├── session/manager.py      # in-memory session registry: history, PDF metadata, per-session chain
 │   │   ├── chains/                 # chat_chain (router + both chains), router, rag_chain, llm_chain
-│   │   ├── models/llm_model.py     # Loads the OpenRouter chat model (ChatOpenAI)
+│   │   ├── agents/                 # Agentic RAG: orchestrator, query_classifier, evidence_evaluator, query_rewriter, state
+│   │   ├── models/llm_model.py     # OpenRouter chat models: load_llm (streaming answers) + load_agent_llm (temp-0 agent)
 │   │   ├── ingestion/              # pdf_loader, text_splitter, embeddings, vector_store
 │   │   ├── retrievers/             # hybrid_retriever (BM25 + FAISS + RRF), retriever (builders)
-│   │   ├── core/config.py          # Env-overridable settings (OpenRouter key/model, chunking, retrieval k/RRF…)
+│   │   ├── prompts/chatbot_prompt.py  # the strict RAG system prompt (history + context + question)
+│   │   ├── core/config.py          # Env-overridable settings (OpenRouter, chunking, retrieval k/RRF, agentic knobs)
 │   │   └── utils/                  # colorized logging + doc helpers
 │   ├── requirements.txt
 │   ├── .env.example                # copy to .env, then add your OpenRouter key + model
@@ -53,10 +57,10 @@ For a deeper look — the ingestion pipeline, routing logic, SSE streaming, and 
     ├── index.html                  # applies the saved theme before first paint
     ├── src/
     │   ├── App.tsx                 # two-pane layout (sidebar + conversation)
-    │   ├── components/             # Sidebar, ChatHeader (theme toggle), Composer, MessageList…
+    │   ├── components/             # Sidebar, UploadPanel, StatusPanel, ChatHeader (theme toggle), Composer, MessageList, MessageItem, SourceBadge…
     │   ├── hooks/                  # useChat (session/streaming), useTheme (light/dark)
     │   ├── api/                    # typed REST client + SSE stream reader
-    │   └── styles/tokens.css       # design tokens + light/dark themes
+    │   └── styles/                 # tokens.css (design tokens + light/dark) + global.css
     └── package.json
 ```
 
@@ -183,8 +187,7 @@ are at **http://localhost:8000/docs**. The main endpoints:
 | `POST /api/sessions/{id}/clear` | Clear the conversation |
 | `DELETE /api/sessions/{id}` | Delete the session |
 
-Chat replies stream as Server-Sent Events (`token`, `sources`, `error`, `done`). The
-event shapes and full request flow are documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
+Chat replies stream as Server-Sent Events (`token`, `sources`, `error`, `done`).
 
 ## Why this design
 
