@@ -376,11 +376,7 @@ These limitations are mostly implementation improvements rather than major archi
 
 The core hybrid retrieval and agentic routing design is already in place. The next steps are mainly around improving retrieval quality, persistence, context diversity, and scalability.
 
-## Status
 
-Actively maintained as a portfolio project.
-
-The original Streamlit version has been migrated to a FastAPI backend with a React frontend. The current focus is on improving the retrieval pipeline and addressing the limitations listed above.
 
 ## Author
 
