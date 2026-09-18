@@ -20,30 +20,45 @@ from .rag_chain import create_rag_chain, stream_rag_response
 from .router import RouteDecision, route_query
 
 
-def _context_preview(docs: list[Any]) -> str:
-    context = "\n\n".join(getattr(doc, "page_content", "") or "" for doc in docs)
+def _get_context_preview(docs: list[Any]) -> str:
+    """Return a short preview of the retrieved context for logging."""
+    context = "\n\n".join(
+        getattr(doc, "page_content", "") or ""
+        for doc in docs
+    )
     return context.replace("\n", " ")[:300]
 
 
-def _sources_from_decision(decision: RouteDecision | None) -> list[dict[str, str]]:
-    """Distinct ``{name, page}`` sources for the RAG documents that answered the query."""
-    if decision is None or not getattr(decision, "docs", None):
+def _get_sources(decision: RouteDecision | None) -> list[dict[str, str]]:
+    """Build a unique list of document sources used by the RAG response."""
+    if decision is None or not decision.docs:
         return []
 
-    seen: set[tuple[str, str]] = set()
     sources: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
     for doc in decision.docs:
         metadata = getattr(doc, "metadata", None) or {}
-        entry = (source_name(doc), page_label(metadata.get("page")))
-        if entry not in seen:
-            seen.add(entry)
-            sources.append({"name": entry[0], "page": entry[1]})
+
+        name = source_name(doc)
+        page = page_label(metadata.get("page"))
+        source_key = (name, page)
+
+        if source_key in seen:
+            continue
+
+        seen.add(source_key)
+        sources.append({
+            "name": name,
+            "page": page,
+        })
+
     return sources
 
 
 @dataclass
 class HybridChatChain:
-    """Routes each question to either general LLM chat or PDF RAG."""
+    """Route user questions between general LLM chat and PDF-based RAG."""
 
     retriever: Any | None = None
     last_decision: RouteDecision | None = None
@@ -51,80 +66,111 @@ class HybridChatChain:
     def __post_init__(self) -> None:
         self.llm_chain = create_llm_chain()
         self.rag_chain = create_rag_chain()
-        # Built lazily on first use (only when a retriever exists and the agentic
-        # layer is enabled). Holds no per-query state, so one instance is reused.
         self._orchestrator: AgenticOrchestrator | None = None
 
     def _get_orchestrator(self) -> AgenticOrchestrator | None:
+        """Create the agentic orchestrator lazily when retrieval is available."""
         if self.retriever is None:
             return None
+
         if self._orchestrator is None:
             self._orchestrator = AgenticOrchestrator(self.retriever)
+
         return self._orchestrator
 
-    def _route(self, question: str, chat_history: str) -> RouteDecision | None:
-        """Decide RAG vs. LLM: agentic orchestrator (default) or legacy router.
+    def _route(
+        self,
+        question: str,
+        chat_history: str,
+    ) -> RouteDecision | None:
+        """
+        Decide whether the question should use RAG or the general LLM.
 
-        The orchestrator returns the same :class:`RouteDecision` the legacy router
-        returns, so all streaming / sources / SSE code below is identical either
-        way. Resilience is layered: an orchestrator error falls back to the one-pass
-        ``route_query``; a router error falls back to the general LLM (``None``).
-        When ``AGENTIC_RAG_ENABLED=false`` the orchestrator is skipped entirely and
-        routing is exactly the legacy single-pass behaviour.
+        Agentic routing is used when enabled. If the agentic layer fails,
+        the legacy router is used as a fallback. If routing itself fails,
+        the caller falls back to the general LLM.
         """
         if settings.agentic_rag_enabled:
             orchestrator = self._get_orchestrator()
+
             if orchestrator is not None:
                 try:
                     return orchestrator.run(question, chat_history)
                 except Exception as exc:
-                    log.error(f"Agentic orchestration failed; falling back to legacy router: {exc}")
+                    log.error(
+                        "Agentic orchestration failed; "
+                        f"falling back to legacy router: {exc}"
+                    )
 
         try:
             return route_query(self.retriever, question)
         except Exception as exc:
-            log.error(f"Router failed; falling back to LLM: {exc}")
+            log.error(
+                f"Router failed; falling back to general LLM: {exc}"
+            )
             return None
 
-    def stream(self, inputs: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        """Yield streaming events for one question.
+    def stream(
+        self,
+        inputs: dict[str, Any],
+    ) -> Iterator[dict[str, Any]]:
+        """
+        Stream the response for a single user question.
 
-        Each yielded value is a dict:
-          - ``{"type": "token", "text": <str>}``  one per generated text delta
-          - ``{"type": "final", "mode": "rag"|"llm", "sources": [{"name","page"}...]}``
-            emitted exactly once, after the answer finishes.
+        Events:
+            {"type": "token", "text": "..."}
+            {"type": "final", "mode": "rag"|"llm", "sources": [...]}
 
-        The routing decision travels *in* the stream (the ``final`` event) rather
-        than via shared instance state, so a single chain instance can be streamed
-        concurrently without callers racing on ``last_decision``. The attribute is
-        still set for logging continuity but must not be read across requests.
+        The final event contains the routing information and sources,
+        so callers do not need to rely on shared instance state.
         """
         question = inputs.get("question", "")
         chat_history = inputs.get("chat_history", "")
+
         request_id = log.get_request_id() or log.new_request_id()
         started_at = perf_counter()
+
         response_chunks: list[str] = []
         actual_route = "llm"
 
         log.section("Before Router")
         log.kv("Question", question)
         log.kv("Retriever is None", self.retriever is None)
-        log.kv("Vector Store Exists", "YES" if vector_store_from_retriever(self.retriever) is not None else "NO")
+        log.kv(
+            "Vector Store Exists",
+            "YES"
+            if vector_store_from_retriever(self.retriever) is not None
+            else "NO",
+        )
         log.kv("Indexed Chunks", indexed_chunks(self.retriever))
 
         decision = self._route(question, chat_history)
-
         self.last_decision = decision
 
         try:
-            if decision is not None and decision.route == "rag" and decision.docs:
+            if (
+                decision is not None
+                and decision.route == "rag"
+                and decision.docs
+            ):
                 try:
                     actual_route = "rag"
+
                     log.section("Before RAG Chain")
                     log.kv("Route Selected", decision.route.upper())
-                    log.kv("Documents Passed To RAG", len(decision.docs))
-                    log.kv("Context Length", context_length(decision.docs))
-                    log.kv("Context Preview", _context_preview(decision.docs))
+                    log.kv(
+                        "Documents Passed To RAG",
+                        len(decision.docs),
+                    )
+                    log.kv(
+                        "Context Length",
+                        context_length(decision.docs),
+                    )
+                    log.kv(
+                        "Context Preview",
+                        _get_context_preview(decision.docs),
+                    )
+
                     for chunk in stream_rag_response(
                         self.rag_chain,
                         decision.docs,
@@ -132,53 +178,134 @@ class HybridChatChain:
                         chat_history,
                     ):
                         response_chunks.append(chunk)
-                        yield {"type": "token", "text": chunk}
-                    yield {"type": "final", "mode": "rag", "sources": _sources_from_decision(decision)}
+                        yield {
+                            "type": "token",
+                            "text": chunk,
+                        }
+
+                    yield {
+                        "type": "final",
+                        "mode": "rag",
+                        "sources": _get_sources(decision),
+                    }
                     return
+
                 except Exception as exc:
                     actual_route = "llm"
-                    log.error(f"RAG chain failed; falling back to LLM: {exc}")
+                    log.error(
+                        f"RAG chain failed; falling back to LLM: {exc}"
+                    )
+
             else:
                 log.section("Before RAG Chain")
-                log.kv("Route Selected", getattr(decision, "route", "unknown").upper() if decision is not None else "UNKNOWN")
-                log.kv("Documents Passed To RAG", 0 if decision is None else len(decision.docs))
-                log.kv("Context Length", 0)
-                log.kv(
-                    "Why No RAG Documents",
-                    "Router did not select RAG."
+
+                selected_route = (
+                    decision.route.upper()
                     if decision is not None
-                    else "Router failed before returning a decision.",
+                    else "UNKNOWN"
                 )
+
+                log.kv("Route Selected", selected_route)
+                log.kv(
+                    "Documents Passed To RAG",
+                    0 if decision is None else len(decision.docs),
+                )
+                log.kv("Context Length", 0)
+
+                if decision is None:
+                    reason = "Router failed before returning a decision."
+                else:
+                    reason = "Router did not select RAG."
+
+                log.kv("Why No RAG Documents", reason)
 
             log.section("Before LLM Chain")
             log.kv("Route Selected", "LLM")
-            log.kv("Was Retrieval Attempted", "NO" if self.retriever is None else "YES")
+            log.kv(
+                "Was Retrieval Attempted",
+                "NO" if self.retriever is None else "YES",
+            )
+
             if decision is None:
-                log.kv("Why RAG Rejected", "Router failed before returning a decision.")
+                log.kv(
+                    "Why RAG Rejected",
+                    "Router failed before returning a decision.",
+                )
+
                 if self.retriever is None:
-                    log.kv("Why Retrieval Was Not Attempted", "HybridChatChain.retriever is None.")
+                    log.kv(
+                        "Why Retrieval Was Not Attempted",
+                        "HybridChatChain.retriever is None.",
+                    )
             else:
-                log.kv("Why RAG Rejected", decision.reason if decision.route != "rag" else "RAG selected but RAG chain failed before completion.")
-                log.kv("Retrieved Chunks", len(decision.retrieved_docs))
-                log.kv("Best Similarity Score", decision.best_score if decision.best_score is not None else "N/A")
-                log.kv("Threshold", decision.threshold if decision.threshold is not None else "N/A")
-            for chunk in stream_llm_response(self.llm_chain, question, chat_history):
+                if decision.route != "rag":
+                    rejection_reason = decision.reason
+                else:
+                    rejection_reason = (
+                        "RAG was selected, but the RAG chain failed "
+                        "before completion."
+                    )
+
+                log.kv("Why RAG Rejected", rejection_reason)
+                log.kv(
+                    "Retrieved Chunks",
+                    len(decision.retrieved_docs),
+                )
+                log.kv(
+                    "Best Similarity Score",
+                    (
+                        decision.best_score
+                        if decision.best_score is not None
+                        else "N/A"
+                    ),
+                )
+                log.kv(
+                    "Threshold",
+                    (
+                        decision.threshold
+                        if decision.threshold is not None
+                        else "N/A"
+                    ),
+                )
+
+            for chunk in stream_llm_response(
+                self.llm_chain,
+                question,
+                chat_history,
+            ):
                 response_chunks.append(chunk)
-                yield {"type": "token", "text": chunk}
-            yield {"type": "final", "mode": "llm", "sources": []}
+                yield {
+                    "type": "token",
+                    "text": chunk,
+                }
+
+            yield {
+                "type": "final",
+                "mode": "llm",
+                "sources": [],
+            }
 
         finally:
             elapsed_ms = (perf_counter() - started_at) * 1000
             response_text = "".join(response_chunks)
+
             log.section("Chat Chain")
             log.kv("Request ID", request_id)
             log.kv("Question", question)
             log.kv("Route", actual_route.upper())
-            log.kv("Documents Used", len(decision.docs) if decision is not None and actual_route == "rag" else 0)
+            log.kv(
+                "Documents Used",
+                (
+                    len(decision.docs)
+                    if decision is not None and actual_route == "rag"
+                    else 0
+                ),
+            )
             log.kv("Response Length", len(response_text))
             log.kv("Response Time", f"{elapsed_ms:.2f} ms")
 
     def invoke(self, inputs: dict[str, Any]) -> str:
+        """Run the chain and return the complete response as a string."""
         return "".join(
             event["text"]
             for event in self.stream(inputs)
@@ -186,13 +313,17 @@ class HybridChatChain:
         )
 
 
-def create_chat_chain(chunks: list[Any] | None = None):
+def create_chat_chain(
+    chunks: list[Any] | None = None,
+):
+    """Create the hybrid chat chain and its optional retriever."""
+    retriever = None
+
     if chunks:
         from app.retrievers.retriever import create_retriever
 
         retriever = create_retriever(chunks)
-    else:
-        retriever = None
 
     chain = HybridChatChain(retriever=retriever)
+
     return chain, retriever
