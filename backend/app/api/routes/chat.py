@@ -31,41 +31,53 @@ def _sse(payload: dict[str, Any]) -> str:
 
 
 def _event_stream(session: ChatSession, question: str) -> Iterator[str]:
+    # Starlette may resume this synchronous generator in a different context
+    # after each yield. Keep the request ID stable, but do not keep its
+    # ContextVar token alive across a yield.
     with log.request_context() as request_id:
-        try:
-            for event in session.stream_turn(question):
-                event_type = event.get("type")
-                if event_type == "token":
-                    yield _sse({"type": "token", "text": event.get("text", "")})
-                elif event_type == "final":
-                    if event.get("mode") == "rag":
-                        yield _sse(
-                            {
-                                "type": "sources",
-                                "mode": "rag",
-                                "sources": event.get("sources", []),
-                            }
-                        )
-                    else:
-                        yield _sse(
-                            {
-                                "type": "sources",
-                                "mode": "llm",
-                                "sources": [],
-                                "label": GENERAL_SOURCE_LABEL,
-                            }
-                        )
-        except Exception as exc:
-            log.error(f"Chat streaming failed: {exc}")
-            yield _sse(
-                {
-                    "type": "error",
-                    "message": f"Sorry, I could not generate a response: {exc}",
-                }
-            )
-        finally:
-            yield _sse({"type": "done", "request_id": request_id})
+        pass
 
+    try:
+        events = iter(session.stream_turn(question))
+        while True:
+            try:
+                with log.request_context(request_id):
+                    event = next(events)
+            except StopIteration:
+                break
+
+            event_type = event.get("type")
+            if event_type == "token":
+                yield _sse({"type": "token", "text": event.get("text", "")})
+            elif event_type == "final":
+                if event.get("mode") == "rag":
+                    yield _sse(
+                        {
+                            "type": "sources",
+                            "mode": "rag",
+                            "sources": event.get("sources", []),
+                        }
+                    )
+                else:
+                    yield _sse(
+                        {
+                            "type": "sources",
+                            "mode": "llm",
+                            "sources": [],
+                            "label": GENERAL_SOURCE_LABEL,
+                        }
+                    )
+    except Exception as exc:
+        with log.request_context(request_id):
+            log.error(f"Chat streaming failed: {exc}")
+        yield _sse(
+            {
+                "type": "error",
+                "message": f"Sorry, I could not generate a response: {exc}",
+            }
+        )
+    finally:
+        yield _sse({"type": "done", "request_id": request_id})
 
 @router.post("/{session_id}/chat")
 def chat(

@@ -103,24 +103,37 @@ class Settings(BaseSettings):
         ),
     )
 
-    # -- LLM via OpenRouter (models/llm_model.py) --------------------------------
-    # OpenRouter is OpenAI-compatible, so the app needs exactly two things from
-    # you: an API key and a model id. Both accept the conventional bare env names
-    # (OPENROUTER_API_KEY / OPENROUTER_MODEL) as well as DOCINTEL_-prefixed ones.
-    # Model ids use OpenRouter's "<provider>/<model>" form, e.g.
-    # "openai/gpt-4o-mini", "google/gemini-2.5-flash", "anthropic/claude-3.5-sonnet".
-    # Browse every available model at https://openrouter.ai/models.
-    openrouter_api_key: str = Field(
+    # -- LLM via Groq (models/llm_model.py) -------------------------------------
+    # Groq exposes an OpenAI-compatible API, so the app still uses the same
+    # ChatOpenAI abstraction with a different API key, base URL, and model.
+    # GROQ_* names are preferred, while the old OPENROUTER_* names remain accepted
+    # for compatibility during transition.
+    groq_api_key: str = Field(
         default="",
-        validation_alias=AliasChoices("OPENROUTER_API_KEY", "DOCINTEL_OPENROUTER_API_KEY"),
+        validation_alias=AliasChoices(
+            "GROQ_API_KEY",
+            "DOCINTEL_GROQ_API_KEY",
+            "OPENROUTER_API_KEY",
+            "DOCINTEL_OPENROUTER_API_KEY",
+        ),
     )
-    openrouter_base_url: str = Field(
-        default="https://openrouter.ai/api/v1",
-        validation_alias=AliasChoices("OPENROUTER_BASE_URL", "DOCINTEL_OPENROUTER_BASE_URL"),
+    groq_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        validation_alias=AliasChoices(
+            "GROQ_BASE_URL",
+            "DOCINTEL_GROQ_BASE_URL",
+            "OPENROUTER_BASE_URL",
+            "DOCINTEL_OPENROUTER_BASE_URL",
+        ),
     )
     llm_model: str = Field(
-        default="openai/gpt-4o-mini",
-        validation_alias=AliasChoices("OPENROUTER_MODEL", "DOCINTEL_LLM_MODEL"),
+        default="openai/gpt-oss-20b",
+        validation_alias=AliasChoices(
+            "GROQ_MODEL",
+            "DOCINTEL_GROQ_MODEL",
+            "OPENROUTER_MODEL",
+            "DOCINTEL_LLM_MODEL",
+        ),
     )
     llm_temperature: float = 0.3
 
