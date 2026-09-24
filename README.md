@@ -1,157 +1,154 @@
 # DocIntel-AI
 
-A PDF chatbot that knows when your question is about the document and when it isn't.
+DocIntel-AI is a hybrid PDF chatbot that can answer from your uploaded documents when the question is document-related, and switch to normal general chat when it is not.
 
-Upload one or more PDFs, ask questions, and DocIntel-AI searches through the documents to give you grounded answers. If you ask something unrelated, like "What's the capital of France?", it won't try to force the PDF into the answer. It simply switches to general chat.
+In simple words: upload one or more PDFs, ask questions, and the app decides whether it should use your documents or the general LLM. This keeps document answers grounded while avoiding the common RAG problem where every question is forced through the uploaded files.
 
-The main idea behind the project is **intelligent retrieval and routing**. Instead of retrieving from the documents for every question, DocIntel-AI decides whether retrieval is actually useful for that question.
+## What This Project Does
 
-It uses a combination of vector similarity, keyword matching, and agreement between the two retrieval methods to make that decision.
+- Lets you upload and chat with one or more PDFs.
+- Uses FAISS for semantic vector search.
+- Uses BM25 for keyword-based retrieval.
+- Combines both retrieval results with Reciprocal Rank Fusion.
+- Routes each question to either RAG or the general LLM path.
+- Supports an agentic retrieval loop that can evaluate evidence, rewrite weak queries, and retry retrieval.
+- Streams answers token by token to the frontend.
+- Shows sources for document-based answers, including PDF name and page.
+- Keeps short conversation memory for follow-up questions.
+- Provides detailed logs for indexing, retrieval, routing, and generation.
 
-## What it does
+## Why It Exists
 
-* Upload one or more PDFs and chat with them through a React interface
-* Uses hybrid retrieval with **BM25** for keyword matching and **FAISS** for semantic search
-* Combines both retrieval rankings using **Reciprocal Rank Fusion (RRF)**
-* Decides whether a question should use document context or general LLM knowledge
-* Uses an agentic retrieval loop that can evaluate the retrieved evidence, rewrite the query, and retry when the first retrieval isn't enough
-* Streams responses token by token so answers appear as they are generated
-* Shows where an answer came from, including the PDF name and page for document-based answers
-* Includes detailed console logging for BM25, FAISS, RRF, routing decisions, and retrieval attempts
+Many PDF chatbot demos assume every question is about the uploaded document. That is fine for a small demo, but it feels unnatural in real use.
 
-## How it works
+If a user uploads a resume and then asks, "Who founded Google?", the system should not force random resume chunks into the answer. It should simply answer using general knowledge.
 
-When a PDF is uploaded, the document is split into smaller chunks. These chunks are embedded and stored in a FAISS index. The same chunks are also indexed using BM25 for keyword-based retrieval.
+DocIntel-AI is built around that idea. It treats routing as a first-class part of the RAG pipeline.
 
-When a question comes in, both retrievers search for relevant chunks. Their rankings are then combined using Reciprocal Rank Fusion, giving us a single list of candidate chunks.
+## How It Works
 
-The system then decides whether the question actually needs the documents.
+```mermaid
+flowchart TD
+  A[Upload PDFs] --> B[Load PDF pages]
+  B --> C[Split into chunks]
+  C --> D[Generate embeddings]
+  D --> E[Build FAISS index]
+  C --> F[Build BM25 retriever]
 
-For document-related questions, an agentic orchestration layer looks at the retrieved evidence and asks whether the original question can actually be answered from those chunks. The semantic relevance, keyword matches, and agreement between BM25 and FAISS are used as supporting signals rather than relying on one fixed similarity threshold.
+  G[User question] --> H[Hybrid / agentic router]
+  H --> I{Use documents?}
+  I -->|Yes| J[Retrieve document context]
+  J --> K[RAG prompt]
+  K --> L[Stream grounded answer + sources]
+  I -->|No| M[General LLM prompt]
+  M --> N[Stream general answer]
+```
 
-If the evidence is good enough, the question and retrieved chunks are passed to the RAG chain.
+When PDFs are uploaded, the backend saves them, loads their pages, splits the text into chunks, embeds those chunks, and builds a FAISS vector store. The same chunks are also used to build a BM25 retriever.
 
-If the evidence isn't sufficient, the system can rewrite the query and try retrieval again. This is useful for cases where the document contains a term such as `deductions`, while the user's question uses `deduction`. The retry process is bounded so it cannot keep running indefinitely.
+When a question arrives, the system retrieves evidence, checks whether the documents are useful for that question, and then chooses the right path:
 
-If useful evidence still cannot be found, the system answers using the available document context and clearly states when the information could not be found rather than making something up.
+- **RAG path** for questions that can be answered from uploaded PDFs.
+- **General LLM path** for normal questions that do not need the PDFs.
 
-If the question has nothing to do with the uploaded documents, it goes directly to the general LLM chain.
+For harder document questions, the agentic layer can rewrite the query and retry retrieval a limited number of times. This helps when the user's wording does not exactly match the wording inside the PDF.
 
-The final response is streamed back to the frontend token by token.
+## Tech Stack
 
-## Tech stack
+| Layer | Technology |
+| --- | --- |
+| Frontend | React, Vite, TypeScript |
+| Backend | FastAPI |
+| Streaming | Server-Sent Events over `fetch` |
+| LLM Client | LangChain `ChatOpenAI` with an OpenAI-compatible API |
+| Default LLM Provider | Groq-compatible config in code |
+| Embeddings | HuggingFace `BAAI/bge-small-en-v1.5` |
+| Vector Store | FAISS |
+| Keyword Retrieval | BM25 |
+| Fusion | Reciprocal Rank Fusion |
+| Orchestration | LangChain / LCEL plus a lightweight agentic retrieval loop |
 
-| Layer         | Tool                                   |
-| ------------- | -------------------------------------- |
-| Frontend      | React + Vite + TypeScript              |
-| Backend / API | FastAPI with SSE streaming             |
-| LLM           | Any model available through OpenRouter |
-| Embeddings    | HuggingFace `BAAI/bge-small-en-v1.5`   |
-| Vector store  | FAISS                                  |
-| Orchestration | LangChain / LCEL                       |
-| Retrieval     | BM25 + FAISS + Reciprocal Rank Fusion  |
-
-## Project structure
+## Project Structure
 
 ```text
 .
 ├── backend/
 │   ├── app/
-│   │   ├── main.py
-│   │   ├── api/
-│   │   │   ├── routes/
-│   │   │   ├── schemas.py
-│   │   │   └── deps.py
-│   │   ├── session/
-│   │   │   └── manager.py
-│   │   ├── chains/
-│   │   ├── agents/
-│   │   ├── models/
-│   │   │   └── llm_model.py
-│   │   ├── ingestion/
-│   │   ├── retrievers/
-│   │   ├── prompts/
-│   │   │   └── chatbot_prompt.py
-│   │   ├── core/
-│   │   │   └── config.py
-│   │   └── utils/
-│   ├── requirements.txt
-│   ├── .env.example
-│   └── .env
+│   │   ├── api/          # FastAPI routes and schemas
+│   │   ├── agents/       # query classification, evidence evaluation, rewriting
+│   │   ├── chains/       # chat orchestration, RAG chain, LLM chain, router
+│   │   ├── core/         # settings and configuration
+│   │   ├── ingestion/    # PDF loading, splitting, embeddings, FAISS storage
+│   │   ├── models/       # LLM client setup
+│   │   ├── prompts/      # RAG prompt
+│   │   ├── retrievers/   # FAISS + BM25 hybrid retrieval
+│   │   ├── session/      # chat session state and lifecycle
+│   │   └── utils/        # logging and document helpers
+│   └── requirements.txt
 │
-└── frontend/
-    ├── index.html
-    ├── src/
-    │   ├── App.tsx
-    │   ├── components/
-    │   ├── hooks/
-    │   ├── api/
-    │   └── styles/
-    └── package.json
+├── frontend/
+│   ├── src/
+│   │   ├── api/          # REST and streaming clients
+│   │   ├── components/   # chat UI components
+│   │   ├── hooks/        # chat state and theme state
+│   │   ├── styles/       # global CSS and design tokens
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   └── package.json
+│
+└── PROJECT_CONTEXT.md    # detailed architecture notes
 ```
 
-## Running locally
+## Running Locally
 
-The project runs as two separate processes:
+The app runs as two separate processes:
 
-1. A FastAPI backend that handles the RAG pipeline and LLM
-2. A React frontend that provides the chat interface
+1. FastAPI backend on `http://localhost:8000`
+2. React frontend on `http://localhost:5173`
 
 ### Prerequisites
 
-* Python 3.10+
-* Node.js 18+
+- Python 3.10+
+- Node.js 18+
+- An API key for an OpenAI-compatible chat provider
 
-### 1. Start the backend
+### 1. Start The Backend
 
 ```bash
 cd backend
-
 python -m venv venv
 venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-For macOS or Linux:
+For macOS/Linux, activate the environment with:
 
 ```bash
 source venv/bin/activate
 ```
 
-Install the dependencies:
+Create `backend/.env` and add your LLM settings. The current backend defaults are Groq-compatible, but OpenRouter-style aliases are also supported.
 
-```bash
-pip install -r requirements.txt
-```
-
-Create your environment file:
-
-```bash
-cp .env.example .env
-```
-
-On Windows:
-
-```bash
-copy .env.example .env
-```
-
-Open `backend/.env` and add your OpenRouter credentials:
+Example with Groq-style settings:
 
 ```env
-OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_MODEL=openai/gpt-4o-mini
+GROQ_API_KEY=your_api_key_here
+GROQ_MODEL=openai/gpt-oss-20b
+GROQ_BASE_URL=https://api.groq.com/openai/v1
 ```
 
-Then start the API:
+Example with OpenRouter-style settings:
+
+```env
+OPENROUTER_API_KEY=your_api_key_here
+OPENROUTER_MODEL=openai/gpt-4o-mini
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+```
+
+Start the backend:
 
 ```bash
 uvicorn app.main:app --reload
-```
-
-The backend will be available at:
-
-```text
-http://localhost:8000
 ```
 
 Health check:
@@ -160,11 +157,11 @@ Health check:
 http://localhost:8000/api/health
 ```
 
-On the first PDF upload, the embedding model `BAAI/bge-small-en-v1.5` will be downloaded locally. The first upload may therefore take a little longer.
+The first PDF upload may take a little longer because the embedding model is downloaded locally.
 
-### 2. Start the frontend
+### 2. Start The Frontend
 
-Open another terminal:
+Open a new terminal:
 
 ```bash
 cd frontend
@@ -172,55 +169,48 @@ npm install
 npm run dev
 ```
 
-The frontend will be available at:
+Open the app:
 
 ```text
 http://localhost:5173
 ```
 
-By default, it connects to the backend at:
+By default, the frontend connects to `http://localhost:8000`. To change that, create `frontend/.env` and set:
 
-```text
-http://localhost:8000
+```env
+VITE_API_BASE=http://localhost:8000
 ```
 
-To use a different backend URL, set `VITE_API_BASE` in `frontend/.env`.
+## API Endpoints
 
-### 3. Start chatting
+Interactive API docs are available at:
 
-Upload a PDF from the sidebar and wait for it to finish processing.
+```text
+http://localhost:8000/docs
+```
 
-Once it is ready, you can start asking questions about the document.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/sessions` | Create a chat session |
+| `GET` | `/api/sessions/{id}` | Get session status |
+| `GET` | `/api/sessions/{id}/messages` | Get message history |
+| `POST` | `/api/sessions/{id}/documents` | Upload and process PDFs |
+| `POST` | `/api/sessions/{id}/chat` | Stream a chat response |
+| `POST` | `/api/sessions/{id}/clear` | Clear the conversation |
+| `DELETE` | `/api/sessions/{id}` | Delete a session |
 
-You can also use the chatbot without uploading a PDF. In that case, it behaves like a normal general-purpose assistant.
+Chat uses Server-Sent Events with these event types:
 
-## Light and dark mode
-
-The UI supports both light and dark themes.
-
-Use the sun/moon toggle in the top-right corner of the chat header to switch between them. The selected theme is saved in the browser, and on the first visit the app follows your system's light or dark preference.
+```text
+token
+sources
+error
+done
+```
 
 ## Configuration
 
-Most settings can be changed through `backend/.env`, so you don't need to modify the code for normal configuration changes.
-
-### LLM
-
-The only required credential is an OpenRouter API key.
-
-```env
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=...
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-```
-
-Example models include:
-
-```env
-OPENROUTER_MODEL=openai/gpt-4o-mini
-OPENROUTER_MODEL=google/gemini-2.5-flash
-OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
-```
+Most configuration lives in `backend/app/core/config.py` and can be overridden through environment variables.
 
 ### Retrieval
 
@@ -230,7 +220,7 @@ FINAL_CONTEXT_K=4
 RRF_K=60
 ```
 
-These control how many candidates are retrieved from BM25 and FAISS, how many fused chunks are finally used as context, and the RRF damping constant.
+These control how many chunks are retrieved, how many are used as final context, and how strongly Reciprocal Rank Fusion smooths rankings.
 
 ### Agentic RAG
 
@@ -240,143 +230,59 @@ AGENTIC_MAX_RETRIEVAL_ATTEMPTS=3
 AGENTIC_EVIDENCE_THRESHOLD=0.70
 ```
 
-The agentic layer evaluates whether the retrieved chunks are actually useful for answering the original question. If they aren't, it can rewrite the query and retry retrieval.
+The agentic layer checks whether retrieved chunks are enough to answer the question. If not, it can rewrite the query and try again. The retry count is capped so the system stays predictable.
 
-The retry count is capped to prevent the process from running indefinitely.
-
-### Routing signals
-
-The following settings control the hybrid retrieval signals:
+### Chunking
 
 ```env
-HYBRID_RAG_SIMILARITY_THRESHOLD=0.35
-HYBRID_RAG_BM25_STRONG_RANK=3
-HYBRID_RAG_LEXICAL_MIN_TERMS=1
-HYBRID_RAG_LEXICAL_MIN_RATIO=0.5
-HYBRID_RAG_MIN_TERM_LEN=3
-HYBRID_RAG_AGREEMENT_RANK=10
-HYBRID_RAG_FAISS_MODERATE_FLOOR=0.30
+DOCINTEL_CHUNK_SIZE=800
+DOCINTEL_CHUNK_OVERLAP=100
 ```
 
-These signals look at:
+### CORS
 
-* **Semantic relevance** from FAISS
-* **Lexical relevance** from BM25
-* **Retriever agreement** between BM25 and FAISS
-
-When agentic RAG is enabled, these values act as supporting evidence for the evaluator rather than hard routing gates.
-
-### Other settings
-
-Additional configuration options use the `DOCINTEL_` prefix, including:
-
-* `DOCINTEL_LLM_TEMPERATURE`
-* `DOCINTEL_CHUNK_SIZE`
-* `DOCINTEL_CHUNK_OVERLAP`
-* `DOCINTEL_CORS_ALLOW_ORIGINS`
-
-For the complete list, check:
-
-```text
-backend/app/core/config.py
+```env
+DOCINTEL_CORS_ALLOW_ORIGINS=http://localhost:5173
 ```
 
-## API
+## Source Attribution
 
-The backend exposes interactive Swagger documentation at:
+For document-based answers, the frontend shows the PDF name and page number used by the backend. For general answers, the source is shown as general AI knowledge.
 
-```text
-http://localhost:8000/docs
-```
+This makes it clear whether an answer came from uploaded documents or from the model's general knowledge.
 
-Main endpoints:
+## Conversation Memory
 
-| Method | Endpoint                       | Purpose                 |
-| ------ | ------------------------------ | ----------------------- |
-| POST   | `/api/sessions`                | Create a chat session   |
-| GET    | `/api/sessions/{id}`           | Get session status      |
-| GET    | `/api/sessions/{id}/messages`  | Get message history     |
-| POST   | `/api/sessions/{id}/documents` | Upload and process PDFs |
-| POST   | `/api/sessions/{id}/chat`      | Stream a chat response  |
-| POST   | `/api/sessions/{id}/clear`     | Clear the conversation  |
-| DELETE | `/api/sessions/{id}`           | Delete a session        |
+The backend keeps recent chat history in memory and passes it into the chain for follow-up questions. The frontend stores the current session id in `localStorage`.
 
-Chat responses are streamed using Server-Sent Events with events such as:
+If the backend restarts, in-memory sessions are lost. The frontend handles that by creating a fresh session when it receives a 404 for an old session id.
 
-```text
-token
-sources
-error
-done
-```
+## Known Limitations
 
-## Why I built it this way
+This is a strong project, but it is still a local/full-stack RAG app rather than a fully deployed enterprise system.
 
-A lot of RAG demos assume that every question is about the uploaded document.
+Current limitations:
 
-That works for a simple demo, but it becomes awkward as soon as someone asks a normal question that has nothing to do with the PDF. The system still retrieves chunks and tries to use them, even when there is no reason to.
+- Sessions are stored in memory.
+- Chat history is not saved in a database.
+- Uploaded files and vector stores are stored locally.
+- BM25 is rebuilt in memory from the stored FAISS documents.
+- There is no authentication layer yet.
+- Large PDF processing happens inside the request flow.
+- There is no dedicated reranker model.
+- Automated tests are not currently present in the source tree.
 
-DocIntel-AI treats routing as an important part of the RAG pipeline.
+## Possible Improvements
 
-For every question, it looks at the query, retrieval results, and evidence before deciding what should answer it. The system also logs what happened during retrieval and why a particular route was chosen.
+Good next steps would be:
 
-The goal is to make the project feel closer to something that could actually be used, rather than just another basic PDF chatbot.
-
-## Known limitations
-
-There are still a few areas that need improvement.
-
-### Embeddings are not normalized
-
-FAISS currently uses L2-based relevance rather than true cosine similarity. This was more important when a single similarity threshold controlled routing.
-
-Now that semantic similarity is only one of several signals used by the agentic evaluator, the impact is smaller. Normalizing the embeddings would still make the semantic signal cleaner.
-
-### Some routing signals are hand-tuned
-
-The routing system uses several manually chosen defaults for semantic relevance, keyword matching, and retriever agreement.
-
-In agentic mode, these values are advisory rather than hard gates, but they are still manually selected rather than learned from data.
-
-### Agentic retrieval adds latency and cost
-
-A document question can require multiple LLM calls before the final response starts streaming.
-
-Most questions are resolved on the first retrieval attempt, but more difficult questions may trigger evaluation and query rewriting.
-
-The quality of the evidence evaluation also depends on the model selected through OpenRouter.
-
-### BM25 is not persisted
-
-The FAISS index is saved to disk for each session, but the BM25 index is rebuilt in memory when the chain loads.
-
-This keeps the indexes synchronized, but rebuilding can become more noticeable with larger document collections.
-
-### No MMR re-ranking
-
-RRF combines the rankings from BM25 and FAISS, but it doesn't currently remove very similar chunks.
-
-As a result, the final context can sometimes contain redundant information.
-
-### New uploads replace previous documents
-
-Uploading another PDF rebuilds the session index using the new files and resets the conversation.
-
-Documents cannot currently be added incrementally to an existing collection.
-
-### Sessions are stored in memory
-
-The FAISS index is persisted to disk, but the session registry itself is stored in memory.
-
-If the backend restarts, the saved index can become disconnected from the previous session and the frontend starts a new session.
-
-## What's next
-
-These limitations are mostly implementation improvements rather than major architectural problems.
-
-The core hybrid retrieval and agentic routing design is already in place. The next steps are mainly around improving retrieval quality, persistence, context diversity, and scalability.
-
-
+- Add automated tests for ingestion, retrieval, routing, and streaming.
+- Add authentication before using it with private documents in a shared environment.
+- Store session metadata and chat history in a database.
+- Add a cleanup policy for old uploads and vector stores.
+- Move large PDF processing to a background worker.
+- Add optional reranking after measuring retrieval quality.
+- Tighten production logging so document snippets are not exposed unnecessarily.
 
 ## Author
 
